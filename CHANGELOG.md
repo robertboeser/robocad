@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### M6 — Inspect & Repair
+- `rc-mesh::repair`: epsilon weld, degenerate and duplicate removal, separation of touching parts (bow-tie vertices, shared edges), orientation fix, outward orientation, hole filling with ear clipping, optional small-part removal; idempotent, with a change report.
+- Safe fixes run automatically on import and are listed under the mesh info; the full Repair runs in the background, replaces the mesh (undoable) and reports what changed.
+- Overhang view (> 45°), import units (mm/cm/m/inch), place-on-plate after import.
+- `robocad-cli repair <in> <out> [--no-fill] [--min-part-triangles N]`.
+- All broken fixtures repair to clean solids accepted by the boolean kernel; 1M-triangle repair ≈ 0.8 s.
+
 ### M5 — Booleans & export
 - `rc-kernel`: `GeometryKernel` trait with the Manifold backend (`manifold-csg`, ADR 0001); property tests for volume identities and watertight results.
 - `rc-doc::eval`: local-frame content hashes, solid cache, group evaluation (union − holes, intersection, hidden children ignored), background `Evaluator`, world-space `export_mesh`.

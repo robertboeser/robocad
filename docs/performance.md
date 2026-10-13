@@ -36,3 +36,9 @@ Reproduce: `cargo run --release -p rc-render --example bench_render -- big.stl 5
 | Union + back to mesh | ~26 ms | < 150 ms |
 
 Release app after M5: binary 11.8 MB (target < 25 MB), warm start ~85 ms, empty-scene RSS ~74 MB.
+
+## Repair (M6)
+
+| Operation | Time | Target |
+|---|---|---|
+| Full repair, 1M triangles with 1000 holes and every 7th face flipped | ~0.8 s | < 2 s |

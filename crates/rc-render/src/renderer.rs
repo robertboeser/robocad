@@ -674,7 +674,12 @@ fn globals_uniform(frame: &FrameDesc<'_>, aspect: f64, size: [u32; 2]) -> Global
         plate_color: style.plate_color,
         grid_color: style.grid_color,
         edge_params: [EDGE_DEPTH_OFFSET, 0.0, 0.0, 0.0],
-        viewport: [size[0] as f32, size[1] as f32, style.outline_width, 0.0],
+        viewport: [
+            size[0] as f32,
+            size[1] as f32,
+            style.outline_width,
+            f32::from(u8::from(style.show_overhangs)),
+        ],
         selection_color: style.selection_color,
         hover_color: style.hover_color,
     }

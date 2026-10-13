@@ -7,6 +7,7 @@ pub mod aabb;
 pub mod bvh;
 pub mod edges;
 pub mod mesh;
+pub mod repair;
 pub mod stl;
 pub mod topology;
 pub mod weld;

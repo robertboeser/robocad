@@ -131,3 +131,30 @@ fn write_read_write_is_stable() {
         assert_eq!(second, stl::read_file(&p).unwrap().mesh);
     }
 }
+
+#[test]
+fn full_repair_fixes_broken_fixtures() {
+    use rc_mesh::repair::{RepairOptions, repair};
+    for (name, expected_volume) in [
+        ("cube_missing_triangle.stl", Some(1000.0)),
+        ("cube_flipped_triangle.stl", Some(1000.0)),
+        ("cube_inverted.stl", Some(1000.0)),
+        ("cube_degenerate.stl", Some(1000.0)),
+        ("cube_with_nan.stl", Some(1000.0)),
+        ("bowtie_vertex.stl", None),
+        ("shared_edge_cubes.stl", Some(2000.0)),
+        ("two_overlapping_cubes.stl", None),
+    ] {
+        let mesh = load(name).mesh;
+        let (fixed, report) = repair(&mesh, &RepairOptions::FULL);
+        assert!(report.after.is_clean_solid(), "{name}: {report:?}");
+        let v = fixed.volume();
+        assert!(v > 0.0, "{name}: volume {v}");
+        if let Some(e) = expected_volume {
+            assert!((v - e).abs() < 1e-6, "{name}: volume {v} vs {e}");
+        }
+        // Repairing again changes nothing.
+        let (_, again) = repair(&fixed, &RepairOptions::FULL);
+        assert!(!again.changed(), "{name}: second repair changed {again:?}");
+    }
+}

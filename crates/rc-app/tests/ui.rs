@@ -140,6 +140,7 @@ fn tree_selection_group_and_rename() {
 #[test]
 fn typed_math_moves_object() {
     let Some(mut h) = harness() else { return };
+    h.state_mut().place_on_plate = false;
     h.state_mut()
         .import_blocking(fixture("cube_binary.stl"))
         .unwrap();
@@ -375,7 +376,7 @@ fn drop_to_plate_and_drag_from_toolbar() {
 fn settle(h: &mut Harness<'_, RobocadApp>) {
     for _ in 0..500 {
         h.run_steps(1);
-        if h.state().evaluation_idle() && !h.state().exporting() {
+        if h.state().evaluation_idle() && !h.state().exporting() && !h.state().repairing() {
             h.run_steps(2);
             return;
         }
@@ -432,4 +433,74 @@ fn hole_group_is_combined_and_exported() {
     assert!(rc_mesh::topology::analyze(&f.mesh).is_watertight());
     assert!((f.mesh.volume() - expected).abs() < 1e-2);
     assert!(h.state().messages().iter().any(|m| m.contains("Exported")));
+}
+
+#[test]
+fn repair_button_fixes_open_mesh_and_undo_restores() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .import_blocking(fixture("cube_missing_triangle.stl"))
+        .unwrap();
+    h.run_steps(3);
+    let id = roots(&h)[0];
+    let mesh_key = |h: &Harness<'_, RobocadApp>| match h.state().editor.doc().get(id).unwrap().kind
+    {
+        NodeKind::Imported { mesh, .. } => mesh,
+        _ => unreachable!(),
+    };
+    let broken = mesh_key(&h);
+    snapshot(&mut h, "broken_mesh");
+    h.get_by_label("🔧 Repair mesh").click();
+    h.run_steps(1);
+    settle(&mut h);
+    let fixed = mesh_key(&h);
+    assert_ne!(fixed, broken);
+    let doc = h.state().editor.doc();
+    let m = doc.mesh(fixed).unwrap();
+    assert!(rc_mesh::topology::analyze(m).is_clean_solid());
+    assert!(
+        h.state()
+            .messages()
+            .iter()
+            .any(|m| m.contains("now watertight"))
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(mesh_key(&h), broken, "repair is undoable");
+}
+
+#[test]
+fn import_units_and_place_on_plate() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().import_units = rc_app::app::ImportUnits::Inches;
+    h.state_mut()
+        .import_blocking(fixture("cube_binary.stl"))
+        .unwrap();
+    h.run_steps(2);
+    let id = roots(&h)[0];
+    let b = h.state().editor.doc().world_bounds(id);
+    assert!(
+        (b.size().x - 254.0).abs() < 1e-3,
+        "10 inch cube: {:?}",
+        b.size()
+    );
+    assert!(
+        b.min.z.abs() < 1e-4 && b.center().x.abs() < 1e-3,
+        "placed on plate: {b:?}"
+    );
+}
+
+#[test]
+fn overhang_view_renders() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("Sphere").click();
+    h.run_steps(1);
+    h.get_by_label("Torus").click();
+    h.run_steps(1);
+    h.state_mut().show_overhangs = true;
+    h.key_press(Key::Escape);
+    h.key_press(Key::Num1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F);
+    h.run_steps(3);
+    snapshot(&mut h, "overhangs");
 }

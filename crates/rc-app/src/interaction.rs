@@ -68,6 +68,7 @@ impl RobocadApp {
             topology: topology::analyze(m),
             info: m.info(),
             path,
+            notes: Vec::new(),
         });
         if let Some(vp) = self.viewport.as_mut()
             && !vp.renderer().has_mesh(key)
@@ -335,6 +336,7 @@ impl RobocadApp {
             SceneStyle::light()
         };
         style.show_edges = self.show_edges;
+        style.show_overhangs = self.show_overhangs;
         style.outline_width = 2.0 * ui.ctx().pixels_per_point();
         let plate = self.editor.doc().settings.plate_size;
         style.plate_size = [plate[0] as f32, plate[1] as f32];

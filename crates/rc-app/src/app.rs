@@ -32,6 +32,53 @@ pub struct MeshExtras {
     pub topology: TopologyReport,
     pub info: MeshInfo,
     pub path: Option<PathBuf>,
+    /// Fixes applied automatically on import, or by the last repair.
+    pub notes: Vec<String>,
+}
+
+/// Units an imported STL is assumed to be in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ImportUnits {
+    #[default]
+    Millimetres,
+    Centimetres,
+    Metres,
+    Inches,
+}
+
+impl ImportUnits {
+    pub const ALL: [Self; 4] = [
+        Self::Millimetres,
+        Self::Centimetres,
+        Self::Metres,
+        Self::Inches,
+    ];
+
+    pub fn factor(self) -> f64 {
+        match self {
+            Self::Millimetres => 1.0,
+            Self::Centimetres => 10.0,
+            Self::Metres => 1000.0,
+            Self::Inches => 25.4,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Millimetres => "Millimetres",
+            Self::Centimetres => "Centimetres",
+            Self::Metres => "Metres",
+            Self::Inches => "Inches",
+        }
+    }
+}
+
+/// A finished background repair.
+pub(crate) struct RepairDone {
+    node: NodeId,
+    name: String,
+    loaded: LoadedMesh,
+    report: rc_mesh::repair::RepairReport,
 }
 
 pub struct RobocadApp {
@@ -56,6 +103,10 @@ pub struct RobocadApp {
     /// What the viewport shows this frame.
     pub(crate) items: Vec<crate::scene_view::Item>,
     pub(crate) exports: Vec<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub(crate) repairs: Vec<std::sync::mpsc::Receiver<RepairDone>>,
+    pub import_units: ImportUnits,
+    pub place_on_plate: bool,
+    pub show_overhangs: bool,
     pub scene_ui: crate::scene_panel::SceneUiState,
     pub props_ui: crate::properties::PropsUiState,
     color_index: usize,
@@ -88,6 +139,10 @@ impl RobocadApp {
             groups: crate::scene_view::GroupResults::default(),
             items: Vec::new(),
             exports: Vec::new(),
+            repairs: Vec::new(),
+            import_units: ImportUnits::default(),
+            place_on_plate: true,
+            show_overhangs: false,
             scene_ui: crate::scene_panel::SceneUiState::default(),
             props_ui: crate::properties::PropsUiState::default(),
             color_index: 0,
@@ -177,7 +232,8 @@ impl RobocadApp {
         &self.messages
     }
 
-    fn add_loaded(&mut self, loaded: LoadedMesh) {
+    /// Uploads a loaded mesh and records its derived data.
+    fn register_loaded(&mut self, loaded: &LoadedMesh, notes: Vec<String>) -> u64 {
         let key = loaded.mesh.content_hash();
         if let Some(vp) = self.viewport.as_mut()
             && !vp.renderer().has_mesh(key)
@@ -189,24 +245,116 @@ impl RobocadApp {
         self.extras.insert(
             key,
             MeshExtras {
-                bvh: loaded.bvh,
+                bvh: loaded.bvh.clone(),
                 topology: loaded.topology,
                 info: loaded.info,
-                path: Some(loaded.path),
+                path: Some(loaded.path.clone()),
+                notes,
             },
         );
+        key
+    }
+
+    fn add_loaded(&mut self, loaded: LoadedMesh) {
+        self.register_loaded(&loaded, loaded.auto_fixes.clone());
         for w in &loaded.warnings {
             self.messages.push(format!("{}: {w}", loaded.name));
         }
         self.last_load_ms = Some(loaded.elapsed.as_secs_f64() * 1e3);
         let color = self.next_color();
+        let mut transform = rc_doc::Transform::IDENTITY;
+        transform.scale = glam::DVec3::splat(self.import_units.factor());
+        if self.place_on_plate {
+            let b = loaded.info.aabb;
+            let f = self.import_units.factor();
+            let c = b.center().as_dvec3() * f;
+            // Adding 0.0 turns -0.0 into 0.0 so the fields do not show "-0.0".
+            transform.translation =
+                glam::DVec3::new(-c.x, -c.y, -f64::from(b.min.z) * f) + glam::DVec3::ZERO;
+        }
         self.apply(Command::Import {
             name: loaded.name,
             mesh: loaded.mesh,
-            transform: rc_doc::Transform::IDENTITY,
+            transform,
             color,
         });
         self.frame_all();
+    }
+
+    /// Repairs an imported mesh in the background; the result replaces it (undoable).
+    pub fn start_repair(&mut self, node: NodeId) {
+        let Some(n) = self.editor.doc().get(node) else {
+            return;
+        };
+        let rc_doc::NodeKind::Imported { mesh, .. } = n.kind else {
+            return;
+        };
+        let Some(m) = self.editor.doc().mesh(mesh).cloned() else {
+            return;
+        };
+        let name = n.name.clone();
+        let path = self
+            .extras
+            .get(&mesh)
+            .and_then(|e| e.path.clone())
+            .unwrap_or_default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let (fixed, report) =
+                rc_mesh::repair::repair(&m, &rc_mesh::repair::RepairOptions::FULL);
+            let loaded = crate::loader::analyse(path, name.clone(), fixed, start);
+            let _ = tx.send(RepairDone {
+                node,
+                name,
+                loaded,
+                report,
+            });
+        });
+        self.repairs.push(rx);
+    }
+
+    /// True while a repair is running.
+    pub fn repairing(&self) -> bool {
+        !self.repairs.is_empty()
+    }
+
+    fn receive_repairs(&mut self) {
+        let mut finished = Vec::new();
+        self.repairs.retain(|rx| match rx.try_recv() {
+            Ok(done) => {
+                finished.push(done);
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+        });
+        for done in finished {
+            let mut lines = done.report.summary();
+            if lines.is_empty() {
+                self.messages
+                    .push(format!("{}: nothing to repair.", done.name));
+                continue;
+            }
+            let after = done.report.after;
+            let status = if after.is_clean_solid() {
+                "The mesh is now watertight. ✔".to_string()
+            } else {
+                format!(
+                    "Remaining problems: {} open edges, {} non-manifold edges.",
+                    after.boundary_edges, after.non_manifold_edges
+                )
+            };
+            self.register_loaded(&done.loaded, lines.clone());
+            self.apply(Command::ReplaceMesh {
+                node: done.node,
+                mesh: done.loaded.mesh,
+            });
+            lines.insert(0, format!("Repaired {}:", done.name));
+            lines.push(status);
+            self.messages
+                .push(lines.join("\n• ").replacen("\n• ", "\n", 1));
+        }
     }
 
     pub(crate) fn frame_all(&mut self) {
@@ -457,6 +605,14 @@ impl RobocadApp {
                     ui.close();
                     self.open_dialog(ui.ctx());
                 }
+                ui.menu_button("Import options", |ui| {
+                    ui.label("Units of imported STL files");
+                    for u in ImportUnits::ALL {
+                        ui.radio_value(&mut self.import_units, u, u.label());
+                    }
+                    ui.separator();
+                    ui.checkbox(&mut self.place_on_plate, "Place on the plate after import");
+                });
                 ui.separator();
                 if ui.button("Export STL…").clicked() {
                     ui.close();
@@ -537,6 +693,7 @@ impl RobocadApp {
                     ui.close();
                 }
                 ui.checkbox(&mut self.show_edges, "Show edges");
+                ui.checkbox(&mut self.show_overhangs, "Show overhangs (> 45°)");
                 ui.separator();
                 let views = [
                     ("Front  1", StandardView::Front),
@@ -634,6 +791,7 @@ impl eframe::App for RobocadApp {
         self.receive_loads();
         self.receive_evaluations();
         self.receive_exports();
+        self.receive_repairs();
         self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
         // A continuous edit ends when no widget is being dragged or edited.

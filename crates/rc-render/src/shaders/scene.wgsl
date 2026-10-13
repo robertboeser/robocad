@@ -12,7 +12,7 @@ struct Globals {
     plate_color: vec4<f32>,
     grid_color: vec4<f32>,
     edge_params: vec4<f32>,     // x = depth offset factor
-    viewport: vec4<f32>,        // x, y pixel size, z outline width in pixels
+    viewport: vec4<f32>,        // x, y pixel size, z outline width in pixels, w overhangs on
     selection_color: vec4<f32>,
     hover_color: vec4<f32>,
 };
@@ -84,6 +84,10 @@ fn shade(world: vec3<f32>, front: bool) -> vec3<f32> {
     if !front {
         // Back faces are visible only for open or inside-out meshes: show them reddish.
         base = mix(base, vec3<f32>(0.85, 0.12, 0.10), 0.7);
+    }
+    // Overhangs: front faces pointing down more than 45° that do not rest on the plate.
+    if front && g.viewport.w > 0.5 && n.z < -0.7071 && world.z > 0.05 {
+        base = mix(base, vec3<f32>(0.95, 0.18, 0.12), 0.75);
     }
     if obj.flags.y > 0.5 {
         base = mix(base, vec3<f32>(1.0), 0.18);

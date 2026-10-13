@@ -55,6 +55,23 @@ fn benches(c: &mut Criterion) {
         b.iter(|| topology::analyze(black_box(&parsed)));
     });
     g.bench_function("bvh build", |b| b.iter(|| Bvh::build(black_box(&parsed))));
+    // A broken copy: drop every 1000th triangle (1000 holes) and flip every 7th.
+    let mut broken = parsed.clone();
+    let mut i = 0;
+    broken.triangles.retain(|_| {
+        i += 1;
+        i % 1000 != 0
+    });
+    for (k, t) in broken.triangles.iter_mut().enumerate() {
+        if k % 7 == 0 {
+            t.swap(1, 2);
+        }
+    }
+    g.bench_function("full repair (1000 holes, flipped faces)", |b| {
+        b.iter(|| {
+            rc_mesh::repair::repair(black_box(&broken), &rc_mesh::repair::RepairOptions::FULL)
+        });
+    });
     g.bench_function("volume + area", |b| {
         b.iter(|| black_box(&parsed).info());
     });

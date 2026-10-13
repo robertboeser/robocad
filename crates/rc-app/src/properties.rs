@@ -216,6 +216,23 @@ fn single(app: &mut RobocadApp, ui: &mut egui::Ui, id: NodeId) {
     }
     if let NodeKind::Imported { mesh, ref source } = node.kind {
         mesh_info(app, ui, mesh, source);
+        let clean = app
+            .extras
+            .get(&mesh)
+            .is_none_or(|e| e.topology.is_clean_solid() && e.info.volume > 0.0);
+        ui.add_space(4.0);
+        if app.repairing() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Repairing…");
+            });
+        } else if ui
+            .add_enabled(!locked, egui::Button::new(if clean { "Repair (nothing to fix)" } else { "🔧 Repair mesh" }))
+            .on_hover_text("Merge near vertices, remove bad triangles, separate touching parts, fix orientation and fill holes")
+            .clicked()
+        {
+            app.start_repair(id);
+        }
     }
 
     for (cmd, key) in commands {
@@ -401,6 +418,12 @@ fn mesh_info(app: &RobocadApp, ui: &mut egui::Ui, mesh: u64, source: &str) {
         });
         ui.end_row();
     });
+    if !e.notes.is_empty() {
+        ui.label(RichText::new("Fixed automatically:").weak());
+        for n in &e.notes {
+            ui.label(RichText::new(format!("• {n}")).weak());
+        }
+    }
     let t = &e.topology;
     for (n, what) in [
         (t.boundary_edges, "open edges"),

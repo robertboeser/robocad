@@ -19,6 +19,18 @@ struct Cli {
 enum Command {
     /// Print size, volume and printability information about an STL file.
     Info { file: PathBuf },
+    /// Repair an STL file: merge near vertices, remove bad triangles, separate touching parts,
+    /// fix orientation and fill holes.
+    Repair {
+        input: PathBuf,
+        output: PathBuf,
+        /// Do not fill holes.
+        #[arg(long)]
+        no_fill: bool,
+        /// Also remove parts with fewer triangles than this.
+        #[arg(long, default_value_t = 0)]
+        min_part_triangles: usize,
+    },
     /// Convert an STL file between binary and ASCII.
     Convert {
         input: PathBuf,
@@ -37,6 +49,12 @@ fn main() -> Result<()> {
             output,
             ascii,
         } => convert(&input, &output, ascii),
+        Command::Repair {
+            input,
+            output,
+            no_fill,
+            min_part_triangles,
+        } => repair(&input, &output, !no_fill, min_part_triangles),
     }
 }
 
@@ -123,6 +141,35 @@ fn convert(input: &Path, output: &Path, ascii: bool) -> Result<()> {
         "wrote {} triangles to {} ({format:?})",
         file.mesh.triangle_count(),
         output.display()
+    );
+    Ok(())
+}
+
+fn repair(input: &Path, output: &Path, fill: bool, min_part_triangles: usize) -> Result<()> {
+    use rc_mesh::repair::{RepairOptions, repair};
+    let file = load(input)?;
+    let opts = RepairOptions {
+        fill_holes: fill,
+        min_component_triangles: min_part_triangles,
+        ..RepairOptions::FULL
+    };
+    let (fixed, report) = repair(&file.mesh, &opts);
+    let lines = report.summary();
+    if lines.is_empty() {
+        println!("nothing to repair");
+    } else {
+        for l in lines {
+            println!("- {l}");
+        }
+    }
+    stl::write_file(&fixed, output, StlFormat::Binary, "robocad repaired")
+        .with_context(|| format!("failed to write {}", output.display()))?;
+    let after = report.after;
+    println!(
+        "wrote {} ({} triangles) — watertight: {}",
+        output.display(),
+        fixed.triangle_count(),
+        if after.is_watertight() { "yes" } else { "no" }
     );
     Ok(())
 }

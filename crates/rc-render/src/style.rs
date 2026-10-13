@@ -36,6 +36,8 @@ pub struct SceneStyle {
     pub show_edges: bool,
     /// Draw boundary and non-manifold edges in warning colours.
     pub show_diagnostics: bool,
+    /// Tint downward-facing surfaces steeper than 45° that need support when printing.
+    pub show_overhangs: bool,
 }
 
 impl SceneStyle {
@@ -57,6 +59,7 @@ impl SceneStyle {
             show_grid: true,
             show_edges: true,
             show_diagnostics: true,
+            show_overhangs: false,
         }
     }
 

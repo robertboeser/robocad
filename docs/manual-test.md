@@ -40,3 +40,9 @@ Run before tagging a release. Use a release build: `cargo run --release -p rc-ap
 - [ ] Selecting a part in the tree shows it as a ghost inside the group.
 - [ ] A group containing a non-watertight STL shows ⚠ with an explanation.
 - [ ] File → Export STL… writes a file that PrusaSlicer / Bambu Studio / Cura open without repair warnings.
+
+## Inspect & repair (M6)
+- [ ] Importing a broken STL shows ⚠, the issues and "Fixed automatically" notes in Properties.
+- [ ] "Repair mesh" fixes it in the background, shows a report, and ⌘Z restores the original.
+- [ ] View → Show overhangs tints steep undersides red.
+- [ ] File → Import options: inch units scale a 1-unit cube to 25.4 mm; place-on-plate centres imports.

@@ -70,6 +70,7 @@ impl RobocadApp {
             topology: rc_mesh::topology::analyze(&out.mesh),
             info: out.info,
             path: None,
+            notes: Vec::new(),
         });
         if let Some(vp) = self.viewport.as_mut()
             && !vp.renderer().has_mesh(key)

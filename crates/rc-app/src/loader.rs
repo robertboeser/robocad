@@ -21,6 +21,8 @@ pub struct LoadedMesh {
     pub info: MeshInfo,
     pub topology: TopologyReport,
     pub warnings: Vec<String>,
+    /// Safe fixes applied automatically while loading.
+    pub auto_fixes: Vec<String>,
     pub elapsed: Duration,
 }
 
@@ -70,8 +72,19 @@ pub fn load_file(path: PathBuf) -> LoadResult {
         Ok(f) => f,
         Err(e) => return Err((path, e.to_string())),
     };
-    let mesh = file.mesh;
-    // Independent analyses run in parallel.
+    let (mesh, report) = rc_mesh::repair::repair(&file.mesh, &rc_mesh::repair::RepairOptions::SAFE);
+    let auto_fixes = report.summary();
+    let name = path
+        .file_name()
+        .map_or_else(|| "mesh".to_string(), |n| n.to_string_lossy().into_owned());
+    let mut loaded = analyse(path, name, mesh, start);
+    loaded.warnings = file.warnings;
+    loaded.auto_fixes = auto_fixes;
+    Ok(loaded)
+}
+
+/// Computes everything the app needs for a mesh (edges, BVH, info, topology) in parallel.
+pub fn analyse(path: PathBuf, name: String, mesh: Mesh, start: Instant) -> LoadedMesh {
     let ((edges, bvh), (info, topology)) = rayon::join(
         || {
             rayon::join(
@@ -81,10 +94,7 @@ pub fn load_file(path: PathBuf) -> LoadResult {
         },
         || rayon::join(|| mesh.info(), || topology::analyze(&mesh)),
     );
-    let name = path
-        .file_name()
-        .map_or_else(|| "mesh".to_string(), |n| n.to_string_lossy().into_owned());
-    Ok(LoadedMesh {
+    LoadedMesh {
         path,
         name,
         mesh: Arc::new(mesh),
@@ -92,7 +102,8 @@ pub fn load_file(path: PathBuf) -> LoadResult {
         edges,
         info,
         topology,
-        warnings: file.warnings,
+        warnings: Vec::new(),
+        auto_fixes: Vec::new(),
         elapsed: start.elapsed(),
-    })
+    }
 }

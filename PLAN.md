@@ -269,14 +269,14 @@ pub trait GeometryKernel: Send + Sync {
 
 Analysis (`TopologyReport`, shown in an "Inspect" panel): triangle/vertex count, bbox, volume, surface area, components, boundary edges, non-manifold edges, degenerate triangles, flipped/inconsistent orientation, watertight yes/no, optional overhang visualization (faces whose normal is > 45° from +Z facing down, colored).
 
-Repair pipeline (each step individually testable, run in order, reporting what it changed):
-1. Drop NaN/inf and degenerate (zero-area) triangles.
-2. Epsilon weld vertices.
-3. Remove duplicate triangles.
-4. Make orientation consistent per connected component (BFS over edges), then orient outward (signed volume > 0).
-5. Fill simple holes (boundary loops) with ear-clipping fan triangulation for planar-ish loops; skip complicated ones and report.
-6. Optional: remove tiny disconnected components (< N triangles or < X mm³).
-7. Final check; if still not manifold, report remaining issues.
+Repair pipeline (each step individually testable, run in order, reporting what it changed) — *as built in `rc-mesh/src/repair.rs`*:
+1. Epsilon weld (1e-6 × bbox diagonal; bit-identical copies are kept apart because they were split on purpose).
+2. Drop degenerate triangles (NaN/inf are already dropped by the loader).
+3. Remove duplicate triangles; opposite-orientation pairs (internal double walls) cancel.
+4. Optional: remove tiny parts.
+5. Separate touching parts: components are formed over manifold edges only, then vertices shared by several components — or by several fans of one component — are duplicated. Fixes bow-tie vertices and solids touching along an edge.
+6. Orient consistently (BFS over manifold edges), fill holes (Newell-normal plane projection + ear clipping, centre-fan fallback, ≤ 5000 edges), orient each part outward.
+7. Compact and re-analyse; the report lists remaining problems.
 
 ---
 
@@ -376,7 +376,7 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - Export STL: whole scene, or selection; exported mesh = evaluated, transformed, merged result; warn if result is not watertight.
 - **Accept**: property tests (proptest, random boxes/cylinders with random transforms): `vol(A∪B) + vol(A∩B) ≈ vol(A) + vol(B)` (rel. 1e-6), `vol(A−B) = vol(A) − vol(A∩B)`, all results watertight; boolean of two 100 k-tri meshes < 150 ms; UI stays at 60 fps while a slow boolean computes; exported STLs open cleanly in PrusaSlicer/Bambu Studio/Cura without repair warnings (manual check, note in CHANGELOG).
 
-### M6 — Inspect & Repair
+### M6 — Inspect & Repair — ✅ DONE
 - Inspect panel (TopologyReport, volume, area), diagnostic overlay (boundary/non-manifold edges), overhang shading toggle.
 - Repair pipeline (§3.10) as a command (undoable), with a report dialog ("Removed 14 degenerate triangles, filled 2 holes, flipped 1 component").
 - Auto-run steps 1–4 silently on import (they are lossless/safe); offer full repair when issues remain.

@@ -65,3 +65,25 @@ fn convert_round_trip() {
         .success();
     assert_eq!(std::fs::metadata(&binary).unwrap().len(), 84 + 12 * 50);
 }
+
+#[test]
+fn repair_fills_hole() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("fixed.stl");
+    let o = cli()
+        .args([
+            "repair",
+            &fixture("cube_missing_triangle.stl"),
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let text = String::from_utf8(o.get_output().stdout.clone()).unwrap();
+    assert!(text.contains("1 holes filled"), "{text}");
+    assert!(text.contains("watertight: yes"), "{text}");
+    cli()
+        .args(["info", out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("watertight:  yes"));
+}

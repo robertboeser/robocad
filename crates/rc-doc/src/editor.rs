@@ -58,6 +58,11 @@ pub enum Command {
         color: [u8; 3],
     },
     SetPrimitives(Vec<(NodeId, Primitive)>),
+    /// Replaces the mesh of an imported node (e.g. after repair).
+    ReplaceMesh {
+        node: NodeId,
+        mesh: Arc<Mesh>,
+    },
     /// Moves nodes down/up so their lowest point sits on z = 0.
     DropToPlate(Vec<NodeId>),
     /// Aligns nodes to the combined bounds of all of them along `axis` (0 = x, 1 = y, 2 = z).
@@ -87,6 +92,7 @@ impl Command {
             Self::Duplicate(_) => "Duplicate",
             Self::AddPrimitive { .. } => "Add shape",
             Self::SetPrimitives(_) => "Shape",
+            Self::ReplaceMesh { .. } => "Repair",
             Self::DropToPlate(_) => "Drop to plate",
             Self::Align { .. } => "Align",
         }
@@ -526,6 +532,17 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
                 match &mut doc.get_mut(id).ok_or(DocError::NotFound)?.kind {
                     NodeKind::Primitive(old) => *old = p,
                     _ => return Err(DocError::Invalid("not a primitive".into())),
+                }
+            }
+        }
+        Command::ReplaceMesh { node, mesh } => {
+            let key = doc.add_mesh(mesh);
+            match &mut doc.get_mut(node).ok_or(DocError::NotFound)?.kind {
+                NodeKind::Imported { mesh, .. } => *mesh = key,
+                _ => {
+                    return Err(DocError::Invalid(
+                        "only imported meshes can be replaced".into(),
+                    ));
                 }
             }
         }
