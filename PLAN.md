@@ -21,6 +21,7 @@ If the owner answers differently, adjust the affected sections before starting t
 | Q7 | License / open source? | **MIT OR Apache-2.0** dual license (compatible with Manifold's Apache-2.0). | M0 |
 | Q8 | UI language? | **English** UI, strings kept in one module so translation (e.g. German) is easy later. | M3 |
 
+Your defaults fit well. Just stick to them.
 ---
 
 ## 1. Product vision
@@ -333,9 +334,9 @@ On macOS use Cmd instead of Ctrl everywhere (egui `Modifiers::command`). Mac tra
 
 Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D warnings` clean, `cargo fmt --check` clean, a short entry in `CHANGELOG.md`, and a commit. Do not start a milestone before the previous one meets its acceptance criteria.
 
-### M0 — Project skeleton & CI
+### M0 — Project skeleton & CI — ✅ DONE
 - Create the workspace and all six crates (empty but compiling), shared `[workspace.lints]` (`clippy::pedantic` as warn with a few allowed, `unsafe_code = "deny"` everywhere except an FFI crate if one becomes needed).
-- Release profile: `lto = "fat"`, `codegen-units = 1`, `strip = true`, `panic = "abort"` for the app binary. Dev profile: `opt-level = 1` for our crates, `opt-level = 3` for dependencies (geometry is unusable in debug otherwise).
+- Release profile: `lto = "fat"`, `codegen-units = 1`, `strip = true`. (Unwinding is kept instead of `panic = "abort"` so a panic inside a worker thread can be caught and reported instead of killing the app.) Dev profile: `opt-level = 1` for our crates, `opt-level = 3` for dependencies (geometry is unusable in debug otherwise).
 - `CLAUDE.md` with build/test commands and the conventions in §7.
 - GitHub Actions CI: fmt, clippy, test on macOS, Linux, Windows; cache with `Swatinem/rust-cache`.
 - License files, update `README.md` (build instructions).

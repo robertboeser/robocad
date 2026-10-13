@@ -1,0 +1,18 @@
+[package]
+name = "rc-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "robocad"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11", "persistence"] }
+log.workspace = true
+env_logger.workspace = true
+
+[lints]
+workspace = true
