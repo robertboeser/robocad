@@ -17,6 +17,7 @@ path = "src/main.rs"
 rc-mesh.workspace = true
 rc-render.workspace = true
 rc-doc.workspace = true
+rc-kernel.workspace = true
 glam.workspace = true
 rayon.workspace = true
 log.workspace = true

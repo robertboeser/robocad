@@ -42,3 +42,9 @@ Release app after M5: binary 11.8 MB (target < 25 MB), warm start ~85 ms, empty-
 | Operation | Time | Target |
 |---|---|---|
 | Full repair, 1M triangles with 1000 holes and every 7th face flipped | ~0.8 s | < 2 s |
+
+## Patterns (M8)
+
+| Operation | Time | Target |
+|---|---|---|
+| 110 × 110 mm plate minus a 10 × 10 grid of cylinders (release) | ~30 ms | < 500 ms |

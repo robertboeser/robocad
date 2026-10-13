@@ -37,6 +37,12 @@ pub struct ManifoldKernel;
 #[derive(Clone, Debug)]
 pub struct Solid(manifold_csg::Manifold);
 
+impl Solid {
+    pub(crate) fn wrap(m: manifold_csg::Manifold) -> Self {
+        Self(m)
+    }
+}
+
 impl ManifoldKernel {
     fn build(mesh: &Mesh) -> Result<manifold_csg::Manifold, manifold_csg::CsgError> {
         let verts: Vec<f64> = mesh

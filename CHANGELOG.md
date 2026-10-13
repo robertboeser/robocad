@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### M8 — Power features
+- Patterns on groups: mirror (flip in place or mirror copy), linear/grid arrays and circular arrays, evaluated by the kernel; bounds include copies; editable in Properties; Pattern menu in the toolbar.
+- Text objects: bundled Lato Bold (OFL), kerning, multi-line, non-zero fill for letter holes, Manifold extrusion; letter height and depth editable.
+- Measure tool (M): point-to-point distance, Δx/Δy/Δz, face angle and face distance (wall thickness), vertex snapping (Shift = off).
+- Lay flat tool (L): click a face to rotate it onto the plate (one undo step).
+- 3MF export (one object per top-level part, colours, mm) verified with PrusaSlicer; OBJ import.
+- 10 × 10 hole grid in a plate evaluates in ~30 ms (release).
+
 ### M7 — Projects & settings
 - `.rcad` project files (ZIP: `document.json` + raw meshes + thumbnail), atomic writes, checksum and tree validation, versioned format with migration hook and a committed v1 fixture.
 - App: New / Open (projects and STL) / Open recent / Save / Save As, background load and save, window title with file name and • for unsaved changes, unsaved-changes prompt on New, Open and Quit, autosave (default every 2 minutes) with crash recovery on next start.

@@ -2,6 +2,7 @@
 
 pub mod primitive;
 pub mod solid;
+pub mod text;
 
 pub use primitive::{Primitive, PrimitiveKind};
 pub use solid::{GeometryKernel, KernelError, ManifoldKernel, Solid};

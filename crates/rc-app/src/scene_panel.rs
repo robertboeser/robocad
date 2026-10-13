@@ -150,7 +150,14 @@ fn row_contents(
     }
     let role_icon = match (node.role, &node.kind) {
         (Role::Hole, _) => "◻",
+        (
+            Role::Solid,
+            NodeKind::Group {
+                pattern: Some(_), ..
+            },
+        ) => "▦",
         (Role::Solid, NodeKind::Group { .. }) => "▣",
+        (Role::Solid, NodeKind::Text { .. }) => "T",
         (Role::Solid, NodeKind::Imported { .. } | NodeKind::Primitive(_)) => "■",
     };
     let [r, g, b] = node.color;
@@ -188,7 +195,7 @@ fn row_contents(
             .filter(|e| !e.topology.is_watertight())
             .map(|_| "Mesh is not watertight — see Properties".to_string()),
         NodeKind::Group { .. } => app.group_error(id).map(str::to_string),
-        NodeKind::Primitive(_) => None,
+        NodeKind::Primitive(_) | NodeKind::Text { .. } => None,
     };
     let warn = problem.is_some();
     if warn {

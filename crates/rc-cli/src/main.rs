@@ -211,6 +211,10 @@ fn project_info(path: &Path) -> Result<()> {
         let kind = match &n.kind {
             rc_doc::NodeKind::Imported { source, .. } => format!("mesh from {source}"),
             rc_doc::NodeKind::Primitive(p) => p.kind().name().to_lowercase(),
+            rc_doc::NodeKind::Text { text, .. } => format!("text \"{text}\""),
+            rc_doc::NodeKind::Group {
+                pattern: Some(_), ..
+            } => "pattern group".into(),
             rc_doc::NodeKind::Group { .. } => "group".into(),
         };
         let role = if n.role == rc_doc::Role::Hole {

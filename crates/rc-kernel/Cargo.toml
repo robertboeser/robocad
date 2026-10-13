@@ -12,6 +12,7 @@ glam.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 manifold-csg.workspace = true
+ttf-parser = "0.25"
 
 [dev-dependencies]
 proptest.workspace = true

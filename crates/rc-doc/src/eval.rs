@@ -34,8 +34,24 @@ pub fn content_hash(doc: &Document, id: NodeId) -> Option<u64> {
     match &node.kind {
         NodeKind::Imported { mesh, .. } => (1u8, mesh).hash(&mut h),
         NodeKind::Primitive(p) => (2u8, p.cache_key()).hash(&mut h),
-        NodeKind::Group { children, op } => {
+        NodeKind::Text {
+            text,
+            height,
+            depth,
+        } => (4u8, text, height.to_bits(), depth.to_bits()).hash(&mut h),
+        NodeKind::Group {
+            children,
+            op,
+            pattern,
+        } => {
             (3u8, *op as u8).hash(&mut h);
+            if let Some(p) = pattern {
+                for m in p.instances() {
+                    for x in m.to_cols_array() {
+                        x.to_bits().hash(&mut h);
+                    }
+                }
+            }
             for &c in children {
                 let Some(child) = doc.get(c) else { continue };
                 if !child.visible {
@@ -111,6 +127,17 @@ fn leaf_mesh(doc: &Document, id: NodeId) -> Option<Arc<Mesh>> {
     match &doc.get(id)?.kind {
         NodeKind::Imported { mesh, .. } => doc.mesh(*mesh).cloned(),
         NodeKind::Primitive(p) => Some(Arc::new(p.mesh())),
+        NodeKind::Text {
+            text,
+            height,
+            depth,
+        } => rc_kernel::text::text_mesh(&rc_kernel::text::TextParams {
+            text,
+            height: *height,
+            depth: *depth,
+        })
+        .ok()
+        .map(|(m, _)| m),
         NodeKind::Group { .. } => None,
     }
 }
@@ -136,7 +163,7 @@ pub fn eval_solid(doc: &Document, id: NodeId, cache: &mut SolidCache) -> Result<
         return Ok(s);
     }
     let solid = match &node.kind {
-        NodeKind::Imported { .. } | NodeKind::Primitive(_) => {
+        NodeKind::Imported { .. } | NodeKind::Primitive(_) | NodeKind::Text { .. } => {
             let mesh = leaf_mesh(doc, id).ok_or_else(|| EvalError {
                 node: node.name.clone(),
                 message: "mesh data is missing".into(),
@@ -146,7 +173,11 @@ pub fn eval_solid(doc: &Document, id: NodeId, cache: &mut SolidCache) -> Result<
                 message: describe(&e),
             })?
         }
-        NodeKind::Group { children, op } => {
+        NodeKind::Group {
+            children,
+            op,
+            pattern,
+        } => {
             let mut solids = Vec::new();
             let mut holes = Vec::new();
             for &c in children {
@@ -165,10 +196,21 @@ pub fn eval_solid(doc: &Document, id: NodeId, cache: &mut SolidCache) -> Result<
                 GroupOp::Combine => k.union(&solids),
                 GroupOp::Intersect => k.intersection(&solids),
             };
-            if holes.is_empty() {
+            let combined = if holes.is_empty() {
                 base
             } else {
                 k.difference(&base, &k.union(&holes))
+            };
+            match pattern {
+                None => combined,
+                Some(p) => {
+                    let copies: Vec<Solid> = p
+                        .instances()
+                        .iter()
+                        .map(|m| k.transform(&combined, m))
+                        .collect();
+                    k.union(&copies)
+                }
             }
         }
     };
@@ -481,6 +523,137 @@ mod tests {
         );
         assert!(rc_mesh::topology::analyze(&r.mesh).is_watertight());
         let _ = (a, b);
+    }
+
+    #[test]
+    fn mirror_and_circular_patterns() {
+        use crate::Pattern;
+        let mut ed = Editor::default();
+        let a = add(
+            &mut ed,
+            PrimitiveKind::Wedge,
+            DVec3::new(20.0, 10.0, 10.0),
+            DVec3::new(30.0, 0.0, 0.0),
+        );
+        let m = ed
+            .apply(Command::MakePattern {
+                nodes: vec![a],
+                pattern: Pattern::Mirror {
+                    axis: 0,
+                    offset: 10.0,
+                    keep_original: true,
+                },
+            })
+            .unwrap()
+            .created[0];
+        let mut cache = SolidCache::default();
+        let out = eval_display(ed.doc(), m, &mut cache).unwrap();
+        assert!(
+            (out.info.volume - 2.0 * 1000.0).abs() < 1e-6,
+            "{}",
+            out.info.volume
+        );
+        assert!(
+            rc_mesh::topology::analyze(&out.mesh).is_clean_solid(),
+            "mirror keeps outward faces"
+        );
+        let b = ed.doc().world_bounds(m);
+        assert!(
+            (b.size().x - 40.0).abs() < 1e-4,
+            "bounds include the copy: {b:?}"
+        );
+
+        let c = add(
+            &mut ed,
+            PrimitiveKind::Box,
+            DVec3::splat(5.0),
+            DVec3::new(40.0, 0.0, 0.0),
+        );
+        let ring = ed
+            .apply(Command::MakePattern {
+                nodes: vec![c],
+                pattern: Pattern::Circular {
+                    count: 6,
+                    angle_deg: 360.0,
+                    center: DVec3::ZERO,
+                },
+            })
+            .unwrap()
+            .created[0];
+        let out = eval_display(ed.doc(), ring, &mut cache).unwrap();
+        assert!(
+            (out.info.volume - 6.0 * 125.0).abs() < 1e-3,
+            "{}",
+            out.info.volume
+        );
+        let b = ed.doc().world_bounds(ring);
+        assert!(
+            (b.size().x - 85.0).abs() < 0.5,
+            "ring around the plate centre: {b:?}"
+        );
+        assert!(
+            ed.apply(Command::SetPattern(
+                ring,
+                Some(Pattern::Grid {
+                    counts: [100, 100, 1],
+                    spacing: DVec3::ONE
+                })
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn plate_with_hundred_holes_is_fast() {
+        use crate::Pattern;
+        let mut ed = Editor::default();
+        let plate = add(
+            &mut ed,
+            PrimitiveKind::Box,
+            DVec3::new(110.0, 110.0, 4.0),
+            DVec3::ZERO,
+        );
+        let pin = add(
+            &mut ed,
+            PrimitiveKind::Cylinder,
+            DVec3::new(5.0, 5.0, 10.0),
+            DVec3::new(-45.0, -45.0, -3.0),
+        );
+        let grid = ed
+            .apply(Command::MakePattern {
+                nodes: vec![pin],
+                pattern: Pattern::Grid {
+                    counts: [10, 10, 1],
+                    spacing: DVec3::new(10.0, 10.0, 0.0),
+                },
+            })
+            .unwrap()
+            .created[0];
+        ed.apply(Command::ToggleRole(vec![grid])).unwrap();
+        let g = ed.apply(Command::Group(vec![plate, grid])).unwrap().created[0];
+        let start = Instant::now();
+        let out = eval_display(ed.doc(), g, &mut SolidCache::default()).unwrap();
+        let ms = start.elapsed().as_secs_f64() * 1e3;
+        let hole = PrimitiveKind::Cylinder
+            .default_primitive()
+            .with_size(DVec3::new(5.0, 5.0, 10.0))
+            .mesh()
+            .volume();
+        let expected = 110.0 * 110.0 * 4.0 - 100.0 * hole * 0.4;
+        assert!(
+            (out.info.volume - expected).abs() < 1e-2,
+            "{} vs {expected}",
+            out.info.volume
+        );
+        assert!(rc_mesh::topology::analyze(&out.mesh).is_watertight());
+        // Debug builds are much slower; the 500 ms target applies to release builds.
+        let limit = if cfg!(debug_assertions) {
+            5000.0
+        } else {
+            500.0
+        };
+        assert!(ms < limit, "took {ms:.0} ms");
+        eprintln!("100 holes evaluated in {ms:.0} ms");
     }
 
     #[test]

@@ -16,6 +16,9 @@ use crate::loader::FEATURE_ANGLE_DEG;
 /// Salt separating primitive display keys from imported mesh hashes.
 const PRIM_SALT: u64 = 0x9e37_79b9_7f4a_7c15;
 
+/// Salt separating text display keys.
+const TEXT_SALT: u64 = 0x2545_f491_4f6c_dd1d;
+
 pub fn prim_key(p: &Primitive) -> u64 {
     p.cache_key() ^ PRIM_SALT
 }
@@ -25,6 +28,63 @@ pub fn prim_key(p: &Primitive) -> u64 {
 pub struct Pick {
     pub node: NodeId,
     pub point: DVec3,
+    /// Outward face normal in world space.
+    pub normal: DVec3,
+    /// Corners of the hit triangle in world space.
+    pub triangle: [DVec3; 3],
+}
+
+/// The active viewport tool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Tool {
+    /// Select and transform with the gizmo.
+    #[default]
+    Select,
+    /// Click two points to measure distance and angle.
+    Measure,
+    /// Click a face to rotate the object so that face lies on the plate.
+    LayFlat,
+}
+
+/// A measured point.
+#[derive(Clone, Copy, Debug)]
+pub struct MeasurePoint {
+    pub pos: DVec3,
+    pub normal: DVec3,
+}
+
+/// Result of measuring between two points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Measurement {
+    pub distance: f64,
+    pub delta: DVec3,
+    /// Angle between the two face normals in degrees.
+    pub angle_deg: f64,
+    /// Perpendicular distance between parallel faces (wall thickness), if they are parallel.
+    pub face_distance: Option<f64>,
+}
+
+pub fn measure(a: MeasurePoint, b: MeasurePoint) -> Measurement {
+    let delta = b.pos - a.pos;
+    let cos = a.normal.dot(b.normal).clamp(-1.0, 1.0);
+    let angle_deg = cos.acos().to_degrees();
+    let parallel = angle_deg < 1.0 || angle_deg > 179.0;
+    Measurement {
+        distance: delta.length(),
+        delta,
+        angle_deg,
+        face_distance: parallel.then(|| delta.dot(b.normal).abs()),
+    }
+}
+
+/// Pattern presets offered in the toolbar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PatternChoice {
+    Flip,
+    MirrorCopy,
+    Linear,
+    Grid,
+    Circular,
 }
 
 impl RobocadApp {
@@ -47,6 +107,24 @@ impl RobocadApp {
                 let key = prim_key(&p);
                 if !self.prim_meshes.contains_key(&key) {
                     let m = Arc::new(p.mesh());
+                    self.cache_mesh(key, &m, None);
+                    self.prim_meshes.insert(key, m);
+                }
+                Some(key)
+            }
+            NodeKind::Text {
+                text,
+                height,
+                depth,
+            } => {
+                let params = rc_kernel::text::TextParams {
+                    text: &text,
+                    height,
+                    depth,
+                };
+                let key = params.cache_key() ^ TEXT_SALT;
+                if !self.prim_meshes.contains_key(&key) {
+                    let (m, _) = rc_kernel::text::text_mesh(&params).ok()?;
                     self.cache_mesh(key, &m, None);
                     self.prim_meshes.insert(key, m);
                 }
@@ -166,6 +244,89 @@ impl RobocadApp {
         });
     }
 
+    pub fn add_text(&mut self) {
+        let color = self.next_color();
+        let position = self.editor.doc().free_position(DVec3::new(60.0, 15.0, 3.0));
+        self.apply(Command::AddText {
+            text: "robocad".into(),
+            height: 10.0,
+            depth: 3.0,
+            position,
+            color,
+        });
+    }
+
+    pub fn toggle_tool(&mut self, tool: Tool) {
+        self.tool = if self.tool == tool {
+            Tool::Select
+        } else {
+            tool
+        };
+        self.measure_points.clear();
+    }
+
+    /// Wraps the selection in a pattern group with sensible defaults.
+    pub fn pattern_selection(&mut self, choice: PatternChoice) {
+        use rc_doc::Pattern;
+        let nodes = self.editor.selection.ids().to_vec();
+        if nodes.is_empty() {
+            return;
+        }
+        let size = self.editor.doc().bounds_of(&nodes).size().as_dvec3();
+        let pattern = match choice {
+            PatternChoice::Flip => Pattern::Mirror {
+                axis: 0,
+                offset: 0.0,
+                keep_original: false,
+            },
+            PatternChoice::MirrorCopy => Pattern::Mirror {
+                axis: 0,
+                offset: size.x * 0.5,
+                keep_original: true,
+            },
+            PatternChoice::Linear => Pattern::Grid {
+                counts: [3, 1, 1],
+                spacing: DVec3::new(size.x + 5.0, size.y + 5.0, size.z + 5.0),
+            },
+            PatternChoice::Grid => Pattern::Grid {
+                counts: [3, 3, 1],
+                spacing: DVec3::new(size.x + 5.0, size.y + 5.0, size.z + 5.0),
+            },
+            PatternChoice::Circular => Pattern::Circular {
+                count: 6,
+                angle_deg: 360.0,
+                center: DVec3::ZERO,
+            },
+        };
+        self.apply(Command::MakePattern { nodes, pattern });
+    }
+
+    /// Rotates the picked object so the picked face points down, then drops it to the plate.
+    pub fn lay_flat(&mut self, pick: Pick) {
+        let root = self.root_of(pick.node);
+        if self.editor.doc().is_effectively_locked(root) {
+            return;
+        }
+        let doc = self.editor.doc();
+        let Some(node) = doc.get(root) else { return };
+        let world = doc.world_matrix(root);
+        let parent = node
+            .parent
+            .map_or(glam::DMat4::IDENTITY, |p| doc.world_matrix(p));
+        let pivot = doc.world_bounds(root).center().as_dvec3();
+        let q = glam::DQuat::from_rotation_arc(pick.normal.normalize_or(-DVec3::Z), -DVec3::Z);
+        let r = glam::DMat4::from_translation(pivot)
+            * glam::DMat4::from_quat(q)
+            * glam::DMat4::from_translation(-pivot);
+        let mut t = rc_doc::Transform::from_matrix(&(parent.inverse() * r * world));
+        t.scale = node.transform.scale;
+        let key = 0x1a7_f1a7 ^ self.editor.revision();
+        self.apply_merged(Command::SetTransforms(vec![(root, t)]), key);
+        self.apply_merged(Command::DropToPlate(vec![root]), key);
+        self.editor.end_merge();
+        self.editor.selection.set([root]);
+    }
+
     pub fn drop_selection_to_plate(&mut self) {
         let ids = self.editor.selection.ids().to_vec();
         if !ids.is_empty() {
@@ -269,6 +430,9 @@ impl RobocadApp {
                     self.add_primitive(kind, None);
                 }
             }
+            if ui.button("Text").on_hover_text("Add 3D text").clicked() {
+                self.add_text();
+            }
             ui.separator();
             for (mode, label, key) in [
                 (GizmoMode::Move, "Move", "W"),
@@ -283,6 +447,49 @@ impl RobocadApp {
                     self.gizmo.mode = mode;
                 }
             }
+            ui.separator();
+            if ui
+                .selectable_label(self.tool == Tool::Measure, "Measure")
+                .on_hover_text("Click two points to measure (M). Shift: snap off.")
+                .clicked()
+            {
+                self.toggle_tool(Tool::Measure);
+            }
+            if ui
+                .selectable_label(self.tool == Tool::LayFlat, "Lay flat")
+                .on_hover_text("Click a face to put it on the plate (L)")
+                .clicked()
+            {
+                self.toggle_tool(Tool::LayFlat);
+            }
+            let has_sel = !self.editor.selection.is_empty();
+            ui.add_enabled_ui(has_sel, |ui| {
+                ui.menu_button("Pattern", |ui| {
+                    if ui.button("Mirror (flip in place)").clicked() {
+                        self.pattern_selection(PatternChoice::Flip);
+                        ui.close();
+                    }
+                    if ui.button("Mirror copy").clicked() {
+                        self.pattern_selection(PatternChoice::MirrorCopy);
+                        ui.close();
+                    }
+                    if ui.button("Linear array (3 along X)").clicked() {
+                        self.pattern_selection(PatternChoice::Linear);
+                        ui.close();
+                    }
+                    if ui.button("Grid array (3 × 3)").clicked() {
+                        self.pattern_selection(PatternChoice::Grid);
+                        ui.close();
+                    }
+                    if ui
+                        .button("Circular array (6 around plate centre)")
+                        .clicked()
+                    {
+                        self.pattern_selection(PatternChoice::Circular);
+                        ui.close();
+                    }
+                });
+            });
             ui.separator();
             ui.checkbox(&mut self.snapping, "Snap")
                 .on_hover_text("Snap to the grid and to 15° (hold Alt while dragging to invert)");
@@ -379,7 +586,7 @@ impl RobocadApp {
         };
 
         // Primary drag: gizmo handle, object surface, or box selection.
-        if out.drag_started_primary && !alt {
+        if out.drag_started_primary && !alt && self.tool == Tool::Select {
             let start = out.press_origin.unwrap_or_default();
             let start_px = Pos2::new(start.x as f32, start.y as f32);
             let handle = frame.and_then(|f| self.gizmo.hit(&f, &camera, size, start_px));
@@ -446,7 +653,9 @@ impl RobocadApp {
 
         self.box_selection(ui, &out, shift || command);
 
-        if let Some(click) = out.clicked
+        if self.tool != Tool::Select {
+            self.tool_ui(ui, &out, &camera, shift);
+        } else if let Some(click) = out.clicked
             && self.gizmo.hovered.is_none()
         {
             let hit = self.pick(click, size).map(|p| self.root_of(p.node));
@@ -473,6 +682,103 @@ impl RobocadApp {
                 }
             });
             self.add_primitive(*kind, at.map(|v| DVec3::new(v.x, v.y, 0.0)));
+        }
+    }
+
+    /// Measure and lay-flat tools.
+    fn tool_ui(
+        &mut self,
+        ui: &egui::Ui,
+        out: &crate::viewport::ViewportOutput,
+        camera: &rc_render::OrbitCamera,
+        no_snap: bool,
+    ) {
+        let size = out.viewport_size;
+        let origin = out.rect.min;
+        let to_screen = |p: DVec3| {
+            camera
+                .project(p, size)
+                .map(|v| origin + egui::vec2(v.x as f32, v.y as f32))
+        };
+        let painter = ui.painter();
+        let accent = egui::Color32::from_rgb(255, 196, 0);
+        // Snap a picked point to the nearest triangle corner within 10 px.
+        let snapped = |pick: &Pick, at: DVec2| -> DVec3 {
+            if no_snap {
+                return pick.point;
+            }
+            let click = origin + egui::vec2(at.x as f32, at.y as f32);
+            pick.triangle
+                .iter()
+                .filter_map(|v| to_screen(*v).map(|s| (s.distance(click), *v)))
+                .filter(|(d, _)| *d < 10.0)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map_or(pick.point, |(_, v)| v)
+        };
+        if let Some(h) = out.hover
+            && let Some(pick) = self.pick(h, size)
+            && let Some(s) = to_screen(snapped(&pick, h))
+        {
+            painter.circle_stroke(s, 5.0, egui::Stroke::new(1.5, accent));
+        }
+        if let Some(click) = out.clicked
+            && let Some(pick) = self.pick(click, size)
+        {
+            match self.tool {
+                Tool::Measure => {
+                    if self.measure_points.len() >= 2 {
+                        self.measure_points.clear();
+                    }
+                    self.measure_points.push(MeasurePoint {
+                        pos: snapped(&pick, click),
+                        normal: pick.normal,
+                    });
+                }
+                Tool::LayFlat => {
+                    self.lay_flat(pick);
+                    self.tool = Tool::Select;
+                }
+                Tool::Select => {}
+            }
+        }
+        if self.tool != Tool::Measure {
+            return;
+        }
+        let pts: Vec<egui::Pos2> = self
+            .measure_points
+            .iter()
+            .filter_map(|p| to_screen(p.pos))
+            .collect();
+        for p in &pts {
+            painter.circle_filled(*p, 4.0, accent);
+        }
+        if let [a, b] = self.measure_points[..]
+            && let [pa, pb] = pts[..]
+        {
+            painter.line_segment([pa, pb], egui::Stroke::new(2.0, accent));
+            let m = measure(a, b);
+            let mut text = format!(
+                "{:.2} mm\nΔ {:.2}, {:.2}, {:.2}\nangle {:.1}°",
+                m.distance,
+                m.delta.x + 0.0,
+                m.delta.y + 0.0,
+                m.delta.z + 0.0,
+                m.angle_deg
+            );
+            if let Some(fd) = m.face_distance {
+                use std::fmt::Write as _;
+                let _ = write!(text, "\nface distance {fd:.2} mm");
+            }
+            let mid = pa + (pb - pa) * 0.5 + egui::vec2(10.0, -10.0);
+            let galley = painter.layout_no_wrap(
+                text,
+                egui::FontId::proportional(13.0),
+                egui::Color32::WHITE,
+            );
+            let r = egui::Rect::from_min_size(mid, galley.size()).expand(5.0);
+            painter.rect_filled(r, 4.0, egui::Color32::from_black_alpha(190));
+            painter.galley(mid, galley, egui::Color32::WHITE);
+            self.last_measurement = Some(m);
         }
     }
 

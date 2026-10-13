@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use glam::{DMat4, DVec2};
+use glam::{DMat4, DVec2, DVec3};
 use rc_doc::eval::{EvalOutput, content_hash};
 use rc_doc::{NodeId, Role};
 use rc_mesh::Ray;
@@ -259,11 +259,19 @@ impl RobocadApp {
                 let wp = it.model.transform_point3(hit.point.as_dvec3());
                 let dist = (wp - origin).dot(dir);
                 if best.is_none_or(|(d, _)| dist < d) {
+                    let triangle = m
+                        .triangle(hit.triangle as usize)
+                        .map(|v| it.model.transform_point3(v.as_dvec3()));
+                    let normal = (triangle[1] - triangle[0])
+                        .cross(triangle[2] - triangle[0])
+                        .normalize_or(DVec3::Z);
                     best = Some((
                         dist,
                         Pick {
                             node: it.node,
                             point: wp,
+                            normal,
+                            triangle,
                         },
                     ));
                 }

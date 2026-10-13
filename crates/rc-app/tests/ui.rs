@@ -629,3 +629,147 @@ fn settings_persist_between_sessions() {
         "new projects use the setting"
     );
 }
+
+#[test]
+fn text_tool_adds_editable_text() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("Text").click();
+    h.run_steps(3);
+    let id = roots(&h)[0];
+    let kind = h.state().editor.doc().get(id).unwrap().kind.clone();
+    assert!(matches!(kind, NodeKind::Text { ref text, .. } if text == "robocad"));
+    let b = h.state().editor.doc().world_bounds(id);
+    assert!(
+        b.size().x > 40.0 && (b.size().z - 3.0).abs() < 1e-3,
+        "{:?}",
+        b.size()
+    );
+    h.state_mut()
+        .editor
+        .apply(rc_doc::Command::SetText {
+            node: id,
+            text: "Hi!".into(),
+            height: 20.0,
+            depth: 2.0,
+        })
+        .unwrap();
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F);
+    h.run_steps(3);
+    snapshot(&mut h, "text");
+    assert!(h.state().editor.doc().world_bounds(id).size().y > 19.0);
+}
+
+#[test]
+fn grid_array_pattern_from_toolbar() {
+    let Some(mut h) = harness() else { return };
+    let b = add_box(&mut h);
+    h.get_by_label("Pattern").click();
+    h.run_steps(2);
+    h.get_by_label("Grid array (3 × 3)").click();
+    h.run_steps(2);
+    settle(&mut h);
+    let g = roots(&h)[0];
+    assert_ne!(g, b);
+    let info = h.state().group_info(g).expect("evaluated");
+    assert!((info.volume - 9.0 * 8000.0).abs() < 1e-3, "{}", info.volume);
+    let size = h.state().editor.doc().world_bounds(g).size();
+    assert!(
+        (size.x - 70.0).abs() < 1e-3,
+        "3 boxes of 20 mm, 5 mm gaps: {size:?}"
+    );
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F);
+    h.run_steps(3);
+    snapshot(&mut h, "grid_array");
+}
+
+#[test]
+fn measure_tool_reports_distance() {
+    let Some(mut h) = harness() else { return };
+    let id = add_box(&mut h);
+    h.key_press(Key::Escape);
+    h.key_press(Key::M);
+    h.run_steps(1);
+    let t = transform(&h, id).translation;
+    let p1 = h
+        .state()
+        .screen_pos_of_point(t + glam::DVec3::new(-3.0, 0.0, 20.0))
+        .unwrap();
+    let p2 = h
+        .state()
+        .screen_pos_of_point(t + glam::DVec3::new(3.0, 0.0, 20.0))
+        .unwrap();
+    click(&mut h, p1, Modifiers::NONE);
+    click(&mut h, p2, Modifiers::NONE);
+    h.run_steps(2);
+    snapshot(&mut h, "measure");
+    let m = h.state().last_measurement.expect("measured");
+    assert!((m.distance - 6.0).abs() < 0.2, "{m:?}");
+    assert!(m.angle_deg < 1.0 && m.face_distance.is_some());
+    assert_eq!(roots(&h).len(), 1, "measuring does not change the document");
+}
+
+#[test]
+fn lay_flat_puts_slope_on_plate() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("Wedge").click();
+    h.run_steps(3);
+    let id = roots(&h)[0];
+    h.key_press(Key::Escape);
+    h.key_press(Key::L);
+    h.run_steps(1);
+    let t = transform(&h, id).translation;
+    // Centre of the sloped face of the default 20 mm wedge.
+    let p = h
+        .state()
+        .screen_pos_of_point(t + glam::DVec3::new(0.0, 0.0, 10.0))
+        .unwrap();
+    click(&mut h, p, Modifiers::NONE);
+    h.run_steps(2);
+    let after = transform(&h, id);
+    assert!(after.rotation_deg.length() > 1.0, "rotated: {after:?}");
+    let b = h.state().editor.doc().world_bounds(id);
+    assert!(b.min.z.abs() < 1e-4, "on the plate: {b:?}");
+    // The slope's normal (1,0,1)/√2 must now point straight down: rotation about Y by 135°.
+    let q = after.rotation();
+    let n = q * glam::DVec3::new(1.0, 0.0, 1.0).normalize();
+    assert!(
+        (n - glam::DVec3::new(0.0, 0.0, -1.0)).length() < 1e-6,
+        "{n:?}"
+    );
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert_eq!(
+        transform(&h, id).rotation_deg,
+        glam::DVec3::ZERO,
+        "one undo step"
+    );
+}
+
+#[test]
+fn obj_import_and_3mf_export() {
+    let Some(mut h) = harness() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let obj = dir.path().join("cube.obj");
+    std::fs::write(
+        &obj,
+        "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\n\
+f 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 8 4 1 5\n",
+    )
+    .unwrap();
+    h.state_mut().import_blocking(&obj).unwrap();
+    add_box(&mut h);
+    h.run_steps(2);
+    assert_eq!(roots(&h).len(), 2);
+    let out = dir.path().join("scene.3mf");
+    h.state_mut().export_3mf_to(out.clone());
+    settle(&mut h);
+    assert!(
+        h.state()
+            .messages()
+            .iter()
+            .any(|m| m.contains("Exported 2 objects")),
+        "{:?}",
+        h.state().messages()
+    );
+    assert!(std::fs::metadata(&out).unwrap().len() > 300);
+}

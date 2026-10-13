@@ -9,6 +9,7 @@ use crate::app::RobocadApp;
 pub struct PropsUiState {
     pub lock_aspect: bool,
     name_edit: Option<(NodeId, String)>,
+    text_edit: TextEditState,
 }
 
 impl Default for PropsUiState {
@@ -16,6 +17,7 @@ impl Default for PropsUiState {
         Self {
             lock_aspect: true,
             name_edit: None,
+            text_edit: TextEditState::default(),
         }
     }
 }
@@ -211,7 +213,16 @@ fn single(app: &mut RobocadApp, ui: &mut egui::Ui, id: NodeId) {
     if let NodeKind::Primitive(p) = node.kind {
         shape_section(ui, id, p, &mut commands);
     }
+    if let NodeKind::Text {
+        ref text,
+        height,
+        depth,
+    } = node.kind
+    {
+        text_section(app, ui, id, text, height, depth, &mut commands);
+    }
     if node.is_group() {
+        pattern_section(ui, id, node.pattern(), &mut commands);
         group_info(app, ui, id);
     }
     if let NodeKind::Imported { mesh, ref source } = node.kind {
@@ -247,7 +258,7 @@ fn single(app: &mut RobocadApp, ui: &mut egui::Ui, id: NodeId) {
 fn base_size(app: &RobocadApp, id: NodeId, node: &rc_doc::Node) -> DVec3 {
     let doc = app.editor.doc();
     match node.kind {
-        NodeKind::Imported { .. } | NodeKind::Primitive(_) => {
+        NodeKind::Imported { .. } | NodeKind::Primitive(_) | NodeKind::Text { .. } => {
             doc.local_bounds(id).size().as_dvec3()
         }
         NodeKind::Group { .. } => {
@@ -356,6 +367,168 @@ fn resize(t: Transform, base: DVec3, old: DVec3, new: DVec3, lock: bool) -> Tran
         nt.scale[i] = sign[i] * new[i] / base[i];
     }
     nt
+}
+
+#[derive(Default)]
+pub struct TextEditState {
+    node: Option<NodeId>,
+    text: String,
+}
+
+fn text_section(
+    app: &mut RobocadApp,
+    ui: &mut egui::Ui,
+    id: NodeId,
+    text: &str,
+    height: f64,
+    depth: f64,
+    commands: &mut Vec<(Command, Option<u64>)>,
+) {
+    ui.add_space(6.0);
+    ui.label(RichText::new("Text").strong());
+    let st = &mut app.props_ui.text_edit;
+    if st.node != Some(id) {
+        st.node = Some(id);
+        st.text = text.to_string();
+    }
+    let r = ui.add(
+        egui::TextEdit::multiline(&mut st.text)
+            .desired_rows(2)
+            .desired_width(f32::INFINITY),
+    );
+    if r.lost_focus() && st.text != text && !st.text.trim().is_empty() {
+        commands.push((
+            Command::SetText {
+                node: id,
+                text: st.text.clone(),
+                height,
+                depth,
+            },
+            None,
+        ));
+    }
+    if !r.has_focus() && !r.lost_focus() && st.text != text {
+        st.text = text.to_string();
+    }
+    egui::Grid::new("props_text")
+        .num_columns(2)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| {
+            let (mut h, mut d) = (height, depth);
+            ui.label("Letter height");
+            let rh = ui.add(number(&mut h, 0.1, " mm").range(0.2..=1000.0));
+            ui.end_row();
+            ui.label("Depth");
+            let rd = ui.add(number(&mut d, 0.1, " mm").range(0.05..=1000.0));
+            ui.end_row();
+            if rh.changed() || rd.changed() {
+                let key = if rh.changed() { rh.id } else { rd.id }.value();
+                commands.push((
+                    Command::SetText {
+                        node: id,
+                        text: text.to_string(),
+                        height: h,
+                        depth: d,
+                    },
+                    Some(key),
+                ));
+            }
+        });
+}
+
+fn pattern_section(
+    ui: &mut egui::Ui,
+    id: NodeId,
+    pattern: Option<rc_doc::Pattern>,
+    commands: &mut Vec<(Command, Option<u64>)>,
+) {
+    use rc_doc::Pattern;
+    let Some(p) = pattern else { return };
+    ui.add_space(6.0);
+    ui.label(RichText::new("Pattern").strong());
+    let mut new = p;
+    let mut key = None;
+    egui::Grid::new("props_pattern")
+        .num_columns(2)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| match &mut new {
+            Pattern::Mirror {
+                axis,
+                offset,
+                keep_original,
+            } => {
+                ui.label("Mirror across");
+                ui.horizontal(|ui| {
+                    for (i, n) in ["X", "Y", "Z"].iter().enumerate() {
+                        if ui.selectable_label(*axis == i, *n).clicked() {
+                            *axis = i;
+                        }
+                    }
+                });
+                ui.end_row();
+                ui.label("Plane offset");
+                let r = ui.add(number(offset, 0.1, " mm"));
+                if r.changed() {
+                    key = Some(r.id.value());
+                }
+                ui.end_row();
+                ui.label("");
+                ui.checkbox(keep_original, "Keep original");
+                ui.end_row();
+            }
+            Pattern::Grid { counts, spacing } => {
+                for (i, n) in ["X", "Y", "Z"].iter().enumerate() {
+                    ui.label(format!("{n} copies / spacing"));
+                    ui.horizontal(|ui| {
+                        let r1 = ui.add(egui::DragValue::new(&mut counts[i]).range(1..=100));
+                        let r2 = ui.add(number(&mut spacing[i], 0.1, " mm"));
+                        if r1.changed() {
+                            key = Some(r1.id.value());
+                        }
+                        if r2.changed() {
+                            key = Some(r2.id.value());
+                        }
+                    });
+                    ui.end_row();
+                }
+            }
+            Pattern::Circular {
+                count,
+                angle_deg,
+                center,
+            } => {
+                ui.label("Copies");
+                let r = ui.add(egui::DragValue::new(count).range(1..=360));
+                if r.changed() {
+                    key = Some(r.id.value());
+                }
+                ui.end_row();
+                ui.label("Total angle");
+                let r = ui.add(number(angle_deg, 1.0, " °").range(-360.0..=360.0));
+                if r.changed() {
+                    key = Some(r.id.value());
+                }
+                ui.end_row();
+                ui.label("Centre X / Y");
+                ui.horizontal(|ui| {
+                    let r1 = ui.add(number(&mut center.x, 0.1, " mm"));
+                    let r2 = ui.add(number(&mut center.y, 0.1, " mm"));
+                    if r1.changed() {
+                        key = Some(r1.id.value());
+                    }
+                    if r2.changed() {
+                        key = Some(r2.id.value());
+                    }
+                });
+                ui.end_row();
+            }
+        });
+    if new != p {
+        commands.push((Command::SetPattern(id, Some(new)), key));
+    }
+    if ui.button("Remove pattern").clicked() {
+        commands.push((Command::SetPattern(id, None), None));
+    }
 }
 
 fn group_info(app: &RobocadApp, ui: &mut egui::Ui, id: NodeId) {

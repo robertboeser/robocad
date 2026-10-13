@@ -68,17 +68,27 @@ impl Loader {
 /// Loads and analyses a mesh file on the calling thread.
 pub fn load_file(path: PathBuf) -> LoadResult {
     let start = Instant::now();
-    let file = match stl::read_file(&path) {
-        Ok(f) => f,
-        Err(e) => return Err((path, e.to_string())),
+    let is_obj = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("obj"));
+    let (raw, warnings) = if is_obj {
+        match rc_mesh::obj::read_file(&path) {
+            Ok(r) => r,
+            Err(e) => return Err((path, e.to_string())),
+        }
+    } else {
+        match stl::read_file(&path) {
+            Ok(f) => (f.mesh, f.warnings),
+            Err(e) => return Err((path, e.to_string())),
+        }
     };
-    let (mesh, report) = rc_mesh::repair::repair(&file.mesh, &rc_mesh::repair::RepairOptions::SAFE);
+    let (mesh, report) = rc_mesh::repair::repair(&raw, &rc_mesh::repair::RepairOptions::SAFE);
     let auto_fixes = report.summary();
     let name = path
         .file_name()
         .map_or_else(|| "mesh".to_string(), |n| n.to_string_lossy().into_owned());
     let mut loaded = analyse(path, name, mesh, start);
-    loaded.warnings = file.warnings;
+    loaded.warnings = warnings;
     loaded.auto_fixes = auto_fixes;
     Ok(loaded)
 }

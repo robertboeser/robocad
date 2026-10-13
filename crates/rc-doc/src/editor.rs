@@ -7,7 +7,7 @@ use rc_mesh::Mesh;
 
 use rc_kernel::Primitive;
 
-use crate::{DocError, Document, GroupOp, Node, NodeId, NodeKind, Role, Transform};
+use crate::{DocError, Document, GroupOp, Node, NodeId, NodeKind, Pattern, Role, Transform};
 
 /// Where to align along an axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +50,12 @@ pub enum Command {
     Group(Vec<NodeId>),
     Ungroup(Vec<NodeId>),
     SetGroupOp(NodeId, GroupOp),
+    /// Groups `nodes` with the group origin at their centre and applies a pattern.
+    MakePattern {
+        nodes: Vec<NodeId>,
+        pattern: Pattern,
+    },
+    SetPattern(NodeId, Option<Pattern>),
     Duplicate(Vec<NodeId>),
     /// Adds a primitive as a new root node, positioned in world space.
     AddPrimitive {
@@ -58,6 +64,19 @@ pub enum Command {
         color: [u8; 3],
     },
     SetPrimitives(Vec<(NodeId, Primitive)>),
+    AddText {
+        text: String,
+        height: f64,
+        depth: f64,
+        position: DVec3,
+        color: [u8; 3],
+    },
+    SetText {
+        node: NodeId,
+        text: String,
+        height: f64,
+        depth: f64,
+    },
     /// Replaces the mesh of an imported node (e.g. after repair).
     ReplaceMesh {
         node: NodeId,
@@ -89,9 +108,13 @@ impl Command {
             Self::Group(_) => "Group",
             Self::Ungroup(_) => "Ungroup",
             Self::SetGroupOp(..) => "Group mode",
+            Self::MakePattern { .. } => "Pattern",
+            Self::SetPattern(..) => "Edit pattern",
             Self::Duplicate(_) => "Duplicate",
             Self::AddPrimitive { .. } => "Add shape",
             Self::SetPrimitives(_) => "Shape",
+            Self::AddText { .. } => "Add text",
+            Self::SetText { .. } => "Text",
             Self::ReplaceMesh { .. } => "Repair",
             Self::DropToPlate(_) => "Drop to plate",
             Self::Align { .. } => "Align",
@@ -474,6 +497,7 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
                 NodeKind::Group {
                     children: Vec::new(),
                     op: GroupOp::Combine,
+                    pattern: None,
                 },
             );
             group.color = doc.get(first).map_or(group.color, |n| n.color);
@@ -507,9 +531,68 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
         Command::SetGroupOp(id, new_op) => {
             match &mut doc.get_mut(id).ok_or(DocError::NotFound)?.kind {
                 NodeKind::Group { op, .. } => *op = new_op,
-                NodeKind::Imported { .. } | NodeKind::Primitive(_) => {
+                _ => {
                     return Err(DocError::NotAGroup);
                 }
+            }
+        }
+        Command::MakePattern { nodes, pattern } => {
+            pattern.validate().map_err(DocError::Invalid)?;
+            let ids = top_level(doc, &nodes);
+            let Some(&first) = ids.first() else {
+                return Ok(out);
+            };
+            let parent = doc.get(first).ok_or(DocError::NotFound)?.parent;
+            let index = ids
+                .iter()
+                .filter(|id| doc.get(**id).is_some_and(|n| n.parent == parent))
+                .filter_map(|id| doc.index_in_parent(*id))
+                .min();
+            let bounds = doc.bounds_of(&ids);
+            let centre = if bounds.is_empty() {
+                DVec3::ZERO
+            } else {
+                let c = bounds.center().as_dvec3();
+                DVec3::new(c.x, c.y, f64::from(bounds.min.z))
+            };
+            let parent_world = parent.map_or(glam::DMat4::IDENTITY, |p| doc.world_matrix(p));
+            let mut pattern = pattern;
+            if let Pattern::Circular { center, .. } = &mut pattern {
+                // Default: rotate about the vertical axis through the plate centre.
+                if *center == DVec3::ZERO {
+                    *center = DVec3::new(-centre.x, -centre.y, 0.0);
+                }
+            }
+            let name = match pattern {
+                Pattern::Mirror { .. } => "Mirror",
+                Pattern::Grid { .. } => "Array",
+                Pattern::Circular { .. } => "Circular array",
+            };
+            let mut group = Node::new(
+                doc.unique_name(name),
+                NodeKind::Group {
+                    children: Vec::new(),
+                    op: GroupOp::Combine,
+                    pattern: Some(pattern),
+                },
+            );
+            group.color = doc.get(first).map_or(group.color, |n| n.color);
+            group.transform =
+                Transform::from_translation(parent_world.inverse().transform_point3(centre));
+            let gid = doc.insert(group, parent, index)?;
+            for id in ids {
+                doc.reparent(id, Some(gid), None)?;
+            }
+            sel.set([gid]);
+            out.created.push(gid);
+        }
+        Command::SetPattern(id, new) => {
+            if let Some(p) = &new {
+                p.validate().map_err(DocError::Invalid)?;
+            }
+            match &mut doc.get_mut(id).ok_or(DocError::NotFound)?.kind {
+                NodeKind::Group { pattern, .. } => *pattern = new,
+                _ => return Err(DocError::NotAGroup),
             }
         }
         Command::AddPrimitive {
@@ -538,6 +621,48 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
                     NodeKind::Primitive(old) => *old = p,
                     _ => return Err(DocError::Invalid("not a primitive".into())),
                 }
+            }
+        }
+        Command::AddText {
+            text,
+            height,
+            depth,
+            position,
+            color,
+        } => {
+            validate_text(&text, height, depth)?;
+            let mut node = Node::new(
+                doc.unique_name("Text"),
+                NodeKind::Text {
+                    text,
+                    height,
+                    depth,
+                },
+            );
+            node.transform = Transform::from_translation(position);
+            node.color = color;
+            let id = doc.insert(node, None, None)?;
+            sel.set([id]);
+            out.created.push(id);
+        }
+        Command::SetText {
+            node,
+            text,
+            height,
+            depth,
+        } => {
+            validate_text(&text, height, depth)?;
+            match &mut doc.get_mut(node).ok_or(DocError::NotFound)?.kind {
+                NodeKind::Text {
+                    text: t,
+                    height: h,
+                    depth: d,
+                } => {
+                    *t = text;
+                    *h = height;
+                    *d = depth;
+                }
+                _ => return Err(DocError::Invalid("not a text object".into())),
             }
         }
         Command::ReplaceMesh { node, mesh } => {
@@ -594,6 +719,24 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
         }
     }
     Ok(out)
+}
+
+fn validate_text(text: &str, height: f64, depth: f64) -> Result<(), DocError> {
+    rc_kernel::text::TextParams {
+        text,
+        height,
+        depth,
+    }
+    .validate()
+    .map_err(DocError::Invalid)?;
+    // Make sure the font can actually produce geometry for it.
+    rc_kernel::text::text_mesh(&rc_kernel::text::TextParams {
+        text,
+        height,
+        depth,
+    })
+    .map(|_| ())
+    .map_err(|e| DocError::Invalid(e.to_string()))
 }
 
 fn validate_transform(t: &Transform) -> Result<(), DocError> {

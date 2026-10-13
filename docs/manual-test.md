@@ -54,3 +54,11 @@ Run before tagging a release. Use a release build: `cargo run --release -p rc-ap
 - [ ] Force-quit (Activity Monitor) after editing for > 2 minutes: the next start offers to restore.
 - [ ] Preferences: theme, UI scale and mouse preset apply immediately and persist after restart.
 - [ ] `robocad-cli export project.rcad out.stl` writes the same result as File → Export STL.
+
+## Power features (M8)
+- [ ] Pattern → Mirror copy / Linear / Grid / Circular create patterns that update live when parts or settings change.
+- [ ] Text: edit the text, letter height and depth; letters with holes ("o", "a") print with their holes.
+- [ ] Measure (M): two clicks show distance, offsets, angle; on two parallel faces also the wall thickness.
+- [ ] Lay flat (L): clicking a face puts it on the plate.
+- [ ] File → Export 3MF opens in PrusaSlicer / Bambu Studio with one object per part and colours.
+- [ ] File → Import accepts OBJ files.

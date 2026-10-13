@@ -35,18 +35,133 @@ pub enum GroupOp {
     Intersect,
 }
 
+/// Repetition applied to a group's combined result (in the group's local frame).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Pattern {
+    /// Mirror across the plane perpendicular to `axis` at `offset` from the group origin.
+    Mirror {
+        axis: usize,
+        offset: f64,
+        keep_original: bool,
+    },
+    /// `counts[i]` copies along each axis, `spacing[i]` apart.
+    Grid { counts: [u32; 3], spacing: DVec3 },
+    /// `count` copies rotated about the vertical axis through `center`, spread over `angle_deg`
+    /// (360° = full circle without a duplicate at the end).
+    Circular {
+        count: u32,
+        angle_deg: f64,
+        center: DVec3,
+    },
+}
+
+/// Most copies a pattern may produce (keeps evaluation responsive).
+pub const MAX_PATTERN_COPIES: u32 = 1000;
+
+impl Pattern {
+    /// Local transforms of every copy.
+    pub fn instances(&self) -> Vec<DMat4> {
+        match *self {
+            Self::Mirror {
+                axis,
+                offset,
+                keep_original,
+            } => {
+                let a = DVec3::AXES[axis.min(2)];
+                let mut scale = DVec3::ONE;
+                scale[axis.min(2)] = -1.0;
+                let m = DMat4::from_translation(a * offset)
+                    * DMat4::from_scale(scale)
+                    * DMat4::from_translation(-a * offset);
+                if keep_original {
+                    vec![DMat4::IDENTITY, m]
+                } else {
+                    vec![m]
+                }
+            }
+            Self::Grid { counts, spacing } => {
+                let [cx, cy, cz] = counts.map(|c| c.max(1));
+                let mut v = Vec::with_capacity((cx * cy * cz) as usize);
+                for k in 0..cz {
+                    for j in 0..cy {
+                        for i in 0..cx {
+                            let o = DVec3::new(f64::from(i), f64::from(j), f64::from(k)) * spacing;
+                            v.push(DMat4::from_translation(o));
+                        }
+                    }
+                }
+                v
+            }
+            Self::Circular {
+                count,
+                angle_deg,
+                center,
+            } => {
+                let n = count.max(1);
+                let full = (angle_deg.abs() - 360.0).abs() < 1e-9;
+                let step = if full || n == 1 {
+                    angle_deg / f64::from(n)
+                } else {
+                    angle_deg / f64::from(n - 1)
+                };
+                (0..n)
+                    .map(|k| {
+                        DMat4::from_translation(center)
+                            * DMat4::from_rotation_z((step * f64::from(k)).to_radians())
+                            * DMat4::from_translation(-center)
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    pub fn copies(&self) -> u32 {
+        match *self {
+            Self::Mirror { keep_original, .. } => 1 + u32::from(keep_original),
+            Self::Grid { counts, .. } => counts.iter().map(|c| (*c).max(1)).product(),
+            Self::Circular { count, .. } => count.max(1),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.copies() > MAX_PATTERN_COPIES {
+            return Err(format!(
+                "a pattern can have at most {MAX_PATTERN_COPIES} copies"
+            ));
+        }
+        match *self {
+            Self::Mirror { axis, offset, .. } if axis > 2 || !offset.is_finite() => {
+                Err("invalid mirror plane".into())
+            }
+            Self::Grid { spacing, .. } if !spacing.is_finite() => Err("invalid spacing".into()),
+            Self::Circular {
+                angle_deg, center, ..
+            } if !angle_deg.is_finite() || !center.is_finite() => {
+                Err("invalid circular pattern".into())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     /// A mesh imported from a file, referenced by content hash in the mesh store.
-    Imported {
-        mesh: u64,
-        source: String,
-    },
+    Imported { mesh: u64, source: String },
     /// A parametric primitive (box, cylinder, …).
     Primitive(Primitive),
+    /// Extruded text; `height` is the capital-letter height in mm.
+    Text {
+        text: String,
+        height: f64,
+        depth: f64,
+    },
     Group {
         children: Vec<NodeId>,
         op: GroupOp,
+        /// Optional mirror/array applied to the combined result.
+        #[serde(default)]
+        pattern: Option<Pattern>,
     },
 }
 
@@ -77,6 +192,14 @@ impl Node {
         }
     }
 
+    /// The pattern of a group, if any.
+    pub fn pattern(&self) -> Option<Pattern> {
+        match self.kind {
+            NodeKind::Group { pattern, .. } => pattern,
+            _ => None,
+        }
+    }
+
     pub fn is_group(&self) -> bool {
         matches!(self.kind, NodeKind::Group { .. })
     }
@@ -84,7 +207,7 @@ impl Node {
     pub fn children(&self) -> &[NodeId] {
         match &self.kind {
             NodeKind::Group { children, .. } => children,
-            NodeKind::Imported { .. } | NodeKind::Primitive(_) => &[],
+            NodeKind::Imported { .. } | NodeKind::Primitive(_) | NodeKind::Text { .. } => &[],
         }
     }
 }
@@ -174,7 +297,7 @@ impl Document {
             .values()
             .filter_map(|n| match n.kind {
                 NodeKind::Imported { mesh, .. } => Some(mesh),
-                NodeKind::Group { .. } | NodeKind::Primitive(_) => None,
+                NodeKind::Group { .. } | NodeKind::Primitive(_) | NodeKind::Text { .. } => None,
             })
             .collect();
         if self.meshes.keys().any(|k| !used.contains(k)) {
@@ -209,7 +332,9 @@ impl Document {
             None => Ok(&mut self.roots),
             Some(p) => match &mut self.nodes.get_mut(p).ok_or(DocError::NotFound)?.kind {
                 NodeKind::Group { children, .. } => Ok(children),
-                NodeKind::Imported { .. } | NodeKind::Primitive(_) => Err(DocError::NotAGroup),
+                NodeKind::Imported { .. } | NodeKind::Primitive(_) | NodeKind::Text { .. } => {
+                    Err(DocError::NotAGroup)
+                }
             },
         }
     }
@@ -369,6 +494,16 @@ impl Document {
             Some(NodeKind::Imported { mesh, .. }) => {
                 self.mesh(*mesh).map_or(Aabb::EMPTY, |m| m.aabb())
             }
+            Some(NodeKind::Text {
+                text,
+                height,
+                depth,
+            }) => rc_kernel::text::text_mesh(&rc_kernel::text::TextParams {
+                text,
+                height: *height,
+                depth: *depth,
+            })
+            .map_or(Aabb::EMPTY, |(_, b)| b),
             Some(NodeKind::Primitive(p)) => {
                 let s = p.size().as_vec3();
                 Aabb::new(
@@ -380,46 +515,57 @@ impl Document {
         }
     }
 
-    /// True if `leaf` or a node between it and `top` (exclusive) is a hole.
-    fn is_hole_below(&self, top: NodeId, leaf: NodeId) -> bool {
-        let mut cur = Some(leaf);
-        while let Some(c) = cur {
-            if c == top {
-                return false;
-            }
-            let Some(n) = self.nodes.get(c) else {
-                return false;
-            };
-            if n.role == Role::Hole {
-                return true;
-            }
-            cur = n.parent;
-        }
-        false
-    }
-
-    /// World-space axis-aligned bounds of a node and its descendants. Holes inside a group only
-    /// remove material, so they are ignored unless the group consists of holes only.
+    /// World-space axis-aligned bounds of a node and its descendants, including pattern
+    /// copies. Holes inside a group only remove material, so they are ignored unless the group
+    /// consists of holes only.
     pub fn world_bounds(&self, id: NodeId) -> Aabb {
-        let all = self.leaves(id);
-        let solids: Vec<NodeId> = all
-            .iter()
-            .copied()
-            .filter(|l| !self.is_hole_below(id, *l))
-            .collect();
-        let leaves = if solids.is_empty() { all } else { solids };
+        let parent_world = self
+            .nodes
+            .get(id)
+            .and_then(|n| n.parent)
+            .map_or(DMat4::IDENTITY, |p| self.world_matrix(p));
+        let Some(node) = self.nodes.get(id) else {
+            return Aabb::EMPTY;
+        };
+        let world = parent_world * node.transform.matrix();
         let mut b = Aabb::EMPTY;
-        for leaf in leaves {
-            let local = self.local_bounds(leaf);
-            if local.is_empty() {
-                continue;
-            }
-            let m = self.world_matrix(leaf);
-            for c in local.corners() {
-                b.extend(m.transform_point3(c.as_dvec3()).as_vec3());
-            }
+        self.bounds_rec(id, &world, true, &mut b);
+        if b.is_empty() {
+            // Only holes: include them after all.
+            self.bounds_rec(id, &world, false, &mut b);
         }
         b
+    }
+
+    fn bounds_rec(&self, id: NodeId, world: &DMat4, skip_holes: bool, out: &mut Aabb) {
+        let Some(node) = self.nodes.get(id) else {
+            return;
+        };
+        if node.is_group() {
+            let instances = node
+                .pattern()
+                .map_or_else(|| vec![DMat4::IDENTITY], |p| p.instances());
+            for &c in node.children() {
+                let Some(child) = self.nodes.get(c) else {
+                    continue;
+                };
+                if skip_holes && child.role == Role::Hole {
+                    continue;
+                }
+                for inst in &instances {
+                    let m = *world * *inst * child.transform.matrix();
+                    self.bounds_rec(c, &m, skip_holes, out);
+                }
+            }
+        } else {
+            let local = self.local_bounds(id);
+            if local.is_empty() {
+                return;
+            }
+            for c in local.corners() {
+                out.extend(world.transform_point3(c.as_dvec3()).as_vec3());
+            }
+        }
     }
 
     /// World bounds of all visible root nodes.

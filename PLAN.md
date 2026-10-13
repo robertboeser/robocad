@@ -168,8 +168,10 @@ pub enum NodeKind {
     Primitive(Primitive),              // parametric, see below
     Imported { mesh: MeshRef, source_name: String },  // MeshRef = content hash → Arc<Mesh> in a MeshStore
     Group { children: Vec<NodeId>, op: GroupOp },     // GroupOp::Combine (solids ∪, minus holes) | Intersect
-    Mirror { child: NodeId, plane: Axis },            // M8
-    Array { child: NodeId, kind: ArrayKind },          // M8: linear / circular
+    // As built (M8): mirror and arrays are an optional `pattern: Option<Pattern>` on Group
+    // (Mirror { axis, offset, keep_original } | Grid { counts, spacing } | Circular { count,
+    // angle_deg, center }), so they reuse all group behaviour (tree, holes, nesting, booleans).
+    Text { text: String, height: f64, depth: f64 },   // M8: own node kind (Primitive is Copy)
 }
 // As built (rc-kernel): every primitive is described by its bounding-box size plus shape
 // parameters, so the "Size" field edits the true geometry and tessellation stays adaptive.
@@ -390,7 +392,7 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - `robocad-cli export <project.rcad> <out.stl>` evaluates headlessly.
 - **Accept**: save → load round trip equals the original document (test); loading a v1 file in later versions works (migration test harness in place); killing the app mid-work and restarting offers recovery.
 
-### M8 — Power features
+### M8 — Power features — ✅ DONE
 - Measure tool (point-point, point-face, face-face angle, edge length), results shown as overlay labels.
 - Place-on-face.
 - Mirror node, linear and circular array nodes (parametric).

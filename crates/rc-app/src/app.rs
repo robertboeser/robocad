@@ -111,6 +111,9 @@ pub struct RobocadApp {
     pub settings: crate::settings::Settings,
     pub(crate) settings_saved: crate::settings::Settings,
     pub(crate) project: crate::project_ui::ProjectState,
+    pub tool: crate::interaction::Tool,
+    pub(crate) measure_points: Vec<crate::interaction::MeasurePoint>,
+    pub last_measurement: Option<crate::interaction::Measurement>,
     pub scene_ui: crate::scene_panel::SceneUiState,
     pub props_ui: crate::properties::PropsUiState,
     color_index: usize,
@@ -161,6 +164,9 @@ impl RobocadApp {
             settings,
             dirs,
             project: crate::project_ui::ProjectState::new(recovery),
+            tool: crate::interaction::Tool::Select,
+            measure_points: Vec::new(),
+            last_measurement: None,
             scene_ui: crate::scene_panel::SceneUiState::default(),
             props_ui: crate::properties::PropsUiState::default(),
             color_index: 0,
@@ -202,7 +208,10 @@ impl RobocadApp {
     /// Open dialog for projects and STL files.
     pub(crate) fn open_dialog(&mut self, ctx: &egui::Context) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("robocad projects and STL files", &["rcad", "stl", "STL"])
+            .add_filter(
+                "robocad projects and meshes",
+                &["rcad", "stl", "STL", "obj", "OBJ"],
+            )
             .add_filter("All files", &["*"])
             .pick_file()
         {
@@ -213,7 +222,7 @@ impl RobocadApp {
     /// Import dialog for STL files (several at once).
     pub(crate) fn import_dialog(&mut self, ctx: &egui::Context) {
         if let Some(paths) = rfd::FileDialog::new()
-            .add_filter("STL files", &["stl", "STL"])
+            .add_filter("Meshes (STL, OBJ)", &["stl", "STL", "obj", "OBJ"])
             .add_filter("All files", &["*"])
             .pick_files()
         {
@@ -253,6 +262,15 @@ impl RobocadApp {
         let size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
         let p = vp.camera.project(c, size)?;
         Some(rect.min + egui::vec2(p.x as f32, p.y as f32))
+    }
+
+    /// Screen position (points) of a world point, if on screen.
+    pub fn screen_pos_of_point(&self, p: glam::DVec3) -> Option<Pos2> {
+        let vp = self.viewport.as_ref()?;
+        let rect = self.last_viewport_rect?;
+        let size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
+        let s = vp.camera.project(p, size)?;
+        Some(rect.min + egui::vec2(s.x as f32, s.y as f32))
     }
 
     /// The viewport's screen rectangle from the last frame.
@@ -429,6 +447,38 @@ impl RobocadApp {
         self.export_to(path, selection_only);
     }
 
+    pub(crate) fn export_3mf_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("3MF file", &["3mf"])
+            .set_file_name("model.3mf")
+            .save_file()
+        else {
+            return;
+        };
+        self.export_3mf_to(path);
+    }
+
+    /// Exports the visible scene as 3MF on a worker thread.
+    pub fn export_3mf_to(&mut self, path: PathBuf) {
+        let doc = self.editor.doc().clone();
+        let ids = doc.roots.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = rc_doc::export3mf::export_3mf(&doc, &ids, &path)
+                .map(|(n, warnings)| {
+                    let mut msg = format!("Exported {n} objects to {}", path.display());
+                    for w in warnings {
+                        msg.push_str("\nWarning: ");
+                        msg.push_str(&w);
+                    }
+                    msg
+                })
+                .map_err(|e| format!("Export failed: {e}"));
+            let _ = tx.send(r);
+        });
+        self.exports.push(rx);
+    }
+
     /// Exports the visible scene (or selection) to an STL file on a worker thread.
     pub fn export_to(&mut self, path: PathBuf, selection_only: bool) {
         let doc = self.editor.doc().clone();
@@ -588,8 +638,16 @@ impl RobocadApp {
         if plain(Key::Delete) || plain(Key::Backspace) {
             self.delete_selection();
         }
+        if plain(Key::M) {
+            self.toggle_tool(crate::interaction::Tool::Measure);
+        }
+        if plain(Key::L) {
+            self.toggle_tool(crate::interaction::Tool::LayFlat);
+        }
         if plain(Key::Escape) {
-            if self.gizmo.is_dragging() {
+            if self.tool != crate::interaction::Tool::Select {
+                self.toggle_tool(self.tool);
+            } else if self.gizmo.is_dragging() {
                 self.cancel_gizmo_drag();
             } else {
                 self.editor.selection.clear();
@@ -675,7 +733,7 @@ impl RobocadApp {
                     self.save_as_dialog();
                 }
                 ui.separator();
-                if ui.button("Import STL…  ⌘I").clicked() {
+                if ui.button("Import STL / OBJ…  ⌘I").clicked() {
                     ui.close();
                     self.import_dialog(&ctx);
                 }
@@ -690,6 +748,14 @@ impl RobocadApp {
                 if ui.button("Export STL…").clicked() {
                     ui.close();
                     self.export_dialog(false);
+                }
+                if ui
+                    .button("Export 3MF…")
+                    .on_hover_text("One object per top-level part, with colours")
+                    .clicked()
+                {
+                    ui.close();
+                    self.export_3mf_dialog();
                 }
                 if ui
                     .add_enabled(
