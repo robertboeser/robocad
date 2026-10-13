@@ -82,7 +82,7 @@ Toolchain present on the dev machine: `rustc/cargo 1.98`. Use **edition 2024**, 
 | Large files | (none) | Files are read with `std::fs::read`; memory mapping needs `unsafe` and reading is far cheaper than parsing. |
 | Float parsing | `fast-float` (or `fast-float2`) | ASCII STL. |
 | Parallelism | `rayon` | STL parse, welding, analysis. |
-| Booleans/kernel | Manifold Rust bindings (candidates: `manifold3d`, `manifold-rs`) | **Verify** which crate is maintained. If none is acceptable, write a thin `-sys` crate with `bindgen` against Manifold's C API (`manifoldc`) built via `cmake` crate. Hidden behind `trait GeometryKernel`. |
+| Booleans/kernel | `manifold-csg` 0.4 (Manifold 3.5, pinned commit) | *Chosen in ADR 0001.* Hidden behind `trait GeometryKernel`. First build clones Manifold and needs CMake + C++17. |
 | IDs | `slotmap` | Stable node IDs in the document. |
 | Serialization | `serde`, `serde_json` | Project file manifest. |
 | Project container | `zip` | `.rcad` files. |
@@ -369,7 +369,7 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - Transform gizmo (move/rotate/scale; *as built*: move/rotate in world axes, scale in the object's local axes about its origin; own implementation in `rc-app/src/gizmo.rs` because the external crate does not fit the reverse-Z offscreen viewport) with snapping; "Size" editing with bbox semantics; Drop to plate; Align; Duplicate; Nudge.
 - **Accept**: every primitive passes `is_watertight` and volume tests (e.g. sphere volume within 1 % of 4/3·π·r³ at default segments); a user can build a "box with a hole marker" layout purely with mouse + keyboard; gizmo drags are a single undo step.
 
-### M5 — Booleans (Solid/Hole/Group) & export
+### M5 — Booleans (Solid/Hole/Group) & export — ✅ DONE
 - `rc-kernel`: `GeometryKernel` trait and the Manifold backend (§3.4). Spike first: one day max to pick the binding crate; document the decision in `docs/adr/0001-boolean-kernel.md`.
 - Evaluator on worker thread with content-hash cache, revisions, per-node eval timing (§3.3).
 - Solid/Hole role toggle, Group/Ungroup, Intersect group, hole rendering.

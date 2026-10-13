@@ -181,23 +181,24 @@ fn row_contents(
     if node.role == Role::Hole {
         label = label.italics();
     }
-    let warn = match node.kind {
+    let problem: Option<String> = match node.kind {
         NodeKind::Imported { mesh, .. } => app
             .extras
             .get(&mesh)
-            .is_some_and(|e| !e.topology.is_watertight()),
-        NodeKind::Group { .. } | NodeKind::Primitive(_) => false,
+            .filter(|e| !e.topology.is_watertight())
+            .map(|_| "Mesh is not watertight — see Properties".to_string()),
+        NodeKind::Group { .. } => app.group_error(id).map(str::to_string),
+        NodeKind::Primitive(_) => None,
     };
+    let warn = problem.is_some();
     if warn {
         label = RichText::new(format!("{} ⚠", node.name));
     }
     let resp = ui.add(egui::Button::selectable(selected, label).sense(Sense::click_and_drag()));
     resp.dnd_set_drag_payload(id);
-    let resp = resp.on_hover_text(if warn {
-        "Mesh is not watertight — see Properties"
-    } else {
-        "Click to select, double-click to rename, drag to move"
-    });
+    let resp = resp.on_hover_text(
+        problem.unwrap_or_else(|| "Click to select, double-click to rename, drag to move".into()),
+    );
     if resp.double_clicked() {
         app.scene_ui.renaming = Some((id, node.name.clone()));
     } else if resp.clicked() {

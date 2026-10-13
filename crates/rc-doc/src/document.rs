@@ -380,10 +380,36 @@ impl Document {
         }
     }
 
-    /// World-space axis-aligned bounds of a node and its descendants.
+    /// True if `leaf` or a node between it and `top` (exclusive) is a hole.
+    fn is_hole_below(&self, top: NodeId, leaf: NodeId) -> bool {
+        let mut cur = Some(leaf);
+        while let Some(c) = cur {
+            if c == top {
+                return false;
+            }
+            let Some(n) = self.nodes.get(c) else {
+                return false;
+            };
+            if n.role == Role::Hole {
+                return true;
+            }
+            cur = n.parent;
+        }
+        false
+    }
+
+    /// World-space axis-aligned bounds of a node and its descendants. Holes inside a group only
+    /// remove material, so they are ignored unless the group consists of holes only.
     pub fn world_bounds(&self, id: NodeId) -> Aabb {
+        let all = self.leaves(id);
+        let solids: Vec<NodeId> = all
+            .iter()
+            .copied()
+            .filter(|l| !self.is_hole_below(id, *l))
+            .collect();
+        let leaves = if solids.is_empty() { all } else { solids };
         let mut b = Aabb::EMPTY;
-        for leaf in self.leaves(id) {
+        for leaf in leaves {
             let local = self.local_bounds(leaf);
             if local.is_empty() {
                 continue;

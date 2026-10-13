@@ -11,9 +11,15 @@ rc-mesh.workspace = true
 glam.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+manifold-csg.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "boolean"
+harness = false
 
 [lints]
 workspace = true

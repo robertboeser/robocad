@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### M5 — Booleans & export
+- `rc-kernel`: `GeometryKernel` trait with the Manifold backend (`manifold-csg`, ADR 0001); property tests for volume identities and watertight results.
+- `rc-doc::eval`: local-frame content hashes, solid cache, group evaluation (union − holes, intersection, hidden children ignored), background `Evaluator`, world-space `export_mesh`.
+- App: groups display their combined result (stale result kept while recomputing), selected parts inside groups shown as ghosts, per-group errors in tree and properties, result info, "Combining…" status.
+- Export STL (scene or selection) in the background with watertightness warnings; bounds of groups ignore holes.
+- Example `plate_with_holes` export verified by PrusaSlicer (`manifold = yes`, one part).
+- Benchmarks: 100k × 100k triangle difference ≈ 21 ms, union ≈ 26 ms.
+
 ### M4 — Primitives & direct manipulation
 - `rc-kernel`: parametric box, cylinder/cone (top ratio), ellipsoid, torus and wedge with adaptive tessellation (0.025 mm chord tolerance); all watertight (property-tested).
 - Document: primitive nodes, set-primitive, drop-to-plate, align and free-spot placement.

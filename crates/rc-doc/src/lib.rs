@@ -4,6 +4,7 @@
 
 pub mod document;
 pub mod editor;
+pub mod eval;
 pub mod expr;
 pub mod transform;
 

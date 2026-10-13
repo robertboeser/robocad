@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Pos2, Rect};
 use glam::{DVec2, DVec3};
-use rc_doc::{AlignMode, Command, NodeId, NodeKind, Primitive, PrimitiveKind, Role};
+use rc_doc::{AlignMode, Command, NodeId, NodeKind, Primitive, PrimitiveKind};
 use rc_mesh::edges::feature_edges;
-use rc_mesh::{Bvh, Ray, topology};
-use rc_render::{DrawObject, DrawStyle, SceneStyle};
+use rc_mesh::{Bvh, topology};
+use rc_render::SceneStyle;
 
 use crate::app::{MeshExtras, RobocadApp};
 use crate::gizmo::{GizmoMode, Handle};
@@ -29,7 +29,7 @@ pub struct Pick {
 
 impl RobocadApp {
     /// Display key of a leaf, making sure its mesh, BVH and GPU buffers exist.
-    fn ensure_leaf(&mut self, id: NodeId) -> Option<u64> {
+    pub(crate) fn ensure_leaf(&mut self, id: NodeId) -> Option<u64> {
         let kind = self.editor.doc().get(id)?.kind.clone();
         match kind {
             NodeKind::Imported { mesh, .. } => {
@@ -78,15 +78,8 @@ impl RobocadApp {
         }
     }
 
-    /// Mesh behind a display key.
-    fn mesh_for_key(&self, key: u64) -> Option<&Arc<rc_mesh::Mesh>> {
-        self.prim_meshes
-            .get(&key)
-            .or_else(|| self.editor.doc().mesh(key))
-    }
-
     /// Drops cached primitive meshes that no node uses any more.
-    fn evict_unused(&mut self, used: &[u64]) {
+    pub(crate) fn evict_unused(&mut self, used: &[u64]) {
         if self.prim_meshes.len() <= used.len() + 32 {
             return;
         }
@@ -106,21 +99,6 @@ impl RobocadApp {
         }
     }
 
-    /// Visible leaves with their display keys (creating meshes as needed).
-    fn visible_leaves(&mut self) -> Vec<(NodeId, u64)> {
-        let ids: Vec<NodeId> = {
-            let doc = self.editor.doc();
-            doc.nodes
-                .iter()
-                .filter(|(id, n)| !n.is_group() && doc.is_effectively_visible(*id))
-                .map(|(id, _)| id)
-                .collect()
-        };
-        ids.into_iter()
-            .filter_map(|id| self.ensure_leaf(id).map(|k| (id, k)))
-            .collect()
-    }
-
     /// The root-level ancestor of a node (what a viewport click selects).
     pub(crate) fn root_of(&self, id: NodeId) -> NodeId {
         let doc = self.editor.doc();
@@ -129,47 +107,6 @@ impl RobocadApp {
             cur = p;
         }
         cur
-    }
-
-    /// Closest visible, unlocked leaf under a viewport pixel.
-    pub(crate) fn pick(&self, pixel: DVec2, size: DVec2) -> Option<Pick> {
-        let vp = self.viewport.as_ref()?;
-        let (origin, dir) = vp.camera.ray(pixel, size);
-        let doc = self.editor.doc();
-        let mut best: Option<(f64, Pick)> = None;
-        for (id, node) in &doc.nodes {
-            let key = match &node.kind {
-                NodeKind::Imported { mesh, .. } => *mesh,
-                NodeKind::Primitive(p) => prim_key(p),
-                NodeKind::Group { .. } => continue,
-            };
-            if !doc.is_effectively_visible(id) || doc.is_effectively_locked(id) {
-                continue;
-            }
-            let (Some(m), Some(extra)) = (self.mesh_for_key(key), self.extras.get(&key)) else {
-                continue;
-            };
-            let world = doc.world_matrix(id);
-            let inv = world.inverse();
-            let ray = Ray::new(
-                inv.transform_point3(origin).as_vec3(),
-                inv.transform_vector3(dir).as_vec3(),
-            );
-            if let Some(hit) = extra.bvh.raycast(m, &ray, f32::INFINITY) {
-                let wp = world.transform_point3(hit.point.as_dvec3());
-                let dist = (wp - origin).dot(dir);
-                if best.is_none_or(|(d, _)| dist < d) {
-                    best = Some((
-                        dist,
-                        Pick {
-                            node: id,
-                            point: wp,
-                        },
-                    ));
-                }
-            }
-        }
-        best.map(|(_, p)| p)
     }
 
     /// Root nodes whose projected bounds lie inside a viewport rectangle.
@@ -190,47 +127,6 @@ impl RobocadApp {
                             .project(c.as_dvec3(), size)
                             .is_some_and(|p| rect.contains(Pos2::new(p.x as f32, p.y as f32)))
                     })
-            })
-            .collect()
-    }
-
-    fn draw_objects(&mut self) -> Vec<DrawObject> {
-        let leaves = self.visible_leaves();
-        let used: Vec<u64> = leaves.iter().map(|(_, k)| *k).collect();
-        self.evict_unused(&used);
-        let doc = self.editor.doc();
-        let sel = &self.editor.selection;
-        let in_chain = |id: NodeId, f: &dyn Fn(NodeId) -> bool| {
-            let mut cur = Some(id);
-            while let Some(c) = cur {
-                if f(c) {
-                    return true;
-                }
-                cur = doc.get(c).and_then(|n| n.parent);
-            }
-            false
-        };
-        leaves
-            .into_iter()
-            .filter_map(|(id, key)| {
-                let node = doc.get(id)?;
-                let hole = in_chain(id, &|c| doc.get(c).is_some_and(|n| n.role == Role::Hole));
-                let (color, style) = if hole {
-                    ([0.35, 0.37, 0.40, 0.35], DrawStyle::Hole)
-                } else {
-                    let c = node
-                        .color
-                        .map(|v| rc_render::srgb_to_linear(f32::from(v) / 255.0));
-                    ([c[0], c[1], c[2], 1.0], DrawStyle::Solid)
-                };
-                Some(DrawObject {
-                    mesh: key,
-                    model: doc.world_matrix(id),
-                    color,
-                    style,
-                    selected: in_chain(id, &|c| sel.contains(c)),
-                    hovered: self.hovered.is_some_and(|h| in_chain(id, &|c| c == h)),
-                })
             })
             .collect()
     }
@@ -431,7 +327,8 @@ impl RobocadApp {
     // ------------------------------------------------------------------ viewport
 
     pub(crate) fn viewport_ui(&mut self, ui: &mut egui::Ui) {
-        let objects = self.draw_objects();
+        self.items = self.build_items();
+        let objects = self.draw_list(&self.items);
         let mut style = if ui.visuals().dark_mode {
             SceneStyle::dark()
         } else {

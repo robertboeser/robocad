@@ -286,3 +286,42 @@ fn free_position_avoids_existing_objects() {
         "nearest free grid spot: {spot:?}"
     );
 }
+
+#[test]
+fn group_bounds_ignore_holes() {
+    use rc_doc::PrimitiveKind;
+    let mut ed = Editor::default();
+    let plate = ed
+        .apply(Command::AddPrimitive {
+            primitive: PrimitiveKind::Box
+                .default_primitive()
+                .with_size(DVec3::new(40.0, 40.0, 5.0)),
+            position: DVec3::ZERO,
+            color: [0; 3],
+        })
+        .unwrap()
+        .created[0];
+    let pin = ed
+        .apply(Command::AddPrimitive {
+            primitive: PrimitiveKind::Cylinder.default_primitive(),
+            position: DVec3::new(0.0, 0.0, -5.0),
+            color: [0; 3],
+        })
+        .unwrap()
+        .created[0];
+    ed.apply(Command::ToggleRole(vec![pin])).unwrap();
+    assert_eq!(
+        ed.doc().world_bounds(pin).min.z,
+        -5.0,
+        "a hole on its own has bounds"
+    );
+    let g = ed.apply(Command::Group(vec![plate, pin])).unwrap().created[0];
+    let b = ed.doc().world_bounds(g);
+    assert_eq!((b.min.z, b.max.z), (0.0, 5.0));
+    ed.apply(Command::DropToPlate(vec![g])).unwrap();
+    assert_eq!(
+        ed.doc().world_bounds(g).min.z,
+        0.0,
+        "dropping uses the solid part"
+    );
+}

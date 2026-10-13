@@ -10,6 +10,11 @@ Read `PLAN.md` first. It is the spec; milestones are worked in order and marked 
   `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
 - Benchmarks: `cargo bench -p rc-mesh` (and other crates with `benches/`)
 
+## Local build note (this Mac)
+The Command Line Tools install has a stale C++ header dir. Export this before building, and run
+`cargo clean -p manifold-csg-sys` once if a failed C++ build was cached:
+`export CXXFLAGS="-isystem $(xcrun --show-sdk-path)/usr/include/c++/v1"`
+
 ## Conventions
 - Coordinate system: right-handed, **Z up**, units **millimetres**, CCW triangles face outward.
 - `f64` for document values and transforms; `f32` only for stored mesh vertices and GPU data. Accumulate sums in `f64`.

@@ -33,3 +33,10 @@ Run before tagging a release. Use a release build: `cargo run --release -p rc-ap
 - [ ] Dragging an object (not the gizmo) slides it on the plate.
 - [ ] Arrow keys nudge relative to the view; Shift = 10 mm; PgUp/PgDn change height.
 - [ ] D drops to the plate; Align buttons line up a multi-selection.
+
+## Booleans & export (M5)
+- [ ] Box + cylinder set to hole, grouped (⌘G): the hole cuts through; the status bar shows "combined in … ms".
+- [ ] Moving the group is instant (no recomputation); moving a part inside it updates the result.
+- [ ] Selecting a part in the tree shows it as a ghost inside the group.
+- [ ] A group containing a non-watertight STL shows ⚠ with an explanation.
+- [ ] File → Export STL… writes a file that PrusaSlicer / Bambu Studio / Cura open without repair warnings.

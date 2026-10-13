@@ -24,3 +24,15 @@ Machine: Apple Silicon (M-series), macOS, release/bench profile. Benchmarks: `ca
 | Render 5M triangles, 2560×1600, 4× MSAA (`bench_render` example) | ~2 ms/frame | ≥ 60 fps |
 
 Reproduce: `cargo run --release -p rc-render --example bench_render -- big.stl 5 120`.
+
+## Booleans (M5)
+
+`cargo bench -p rc-kernel --bench boolean` — two overlapping spheres, 101,760 triangles each.
+
+| Operation | Time | Target |
+|---|---|---|
+| Mesh → solid | ~16 ms | — |
+| Difference + back to mesh | ~21 ms | < 150 ms |
+| Union + back to mesh | ~26 ms | < 150 ms |
+
+Release app after M5: binary 11.8 MB (target < 25 MB), warm start ~85 ms, empty-scene RSS ~74 MB.

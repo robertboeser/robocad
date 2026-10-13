@@ -370,3 +370,66 @@ fn drop_to_plate_and_drag_from_toolbar() {
     );
     assert_eq!(t.translation.z, 0.0);
 }
+
+/// Runs frames until background evaluation and exports are finished.
+fn settle(h: &mut Harness<'_, RobocadApp>) {
+    for _ in 0..500 {
+        h.run_steps(1);
+        if h.state().evaluation_idle() && !h.state().exporting() {
+            h.run_steps(2);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("background work did not finish");
+}
+
+#[test]
+fn hole_group_is_combined_and_exported() {
+    let Some(mut h) = harness() else { return };
+    let plate = add_box(&mut h);
+    let prim = rc_doc::PrimitiveKind::Box
+        .default_primitive()
+        .with_size(glam::DVec3::new(40.0, 40.0, 5.0));
+    h.state_mut()
+        .editor
+        .apply(rc_doc::Command::SetPrimitives(vec![(plate, prim)]))
+        .unwrap();
+    h.get_by_label("Cylinder").click();
+    h.run_steps(2);
+    let cyl = *roots(&h).last().unwrap();
+    // Centre the cylinder on the plate and make it a hole (H).
+    let mut t = transform(&h, cyl);
+    t.translation = glam::DVec3::new(0.0, 0.0, -5.0);
+    h.state_mut()
+        .editor
+        .apply(rc_doc::Command::SetTransforms(vec![(cyl, t)]))
+        .unwrap();
+    h.key_press(Key::H);
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::G);
+    settle(&mut h);
+    let g = roots(&h)[0];
+    let info = h.state().group_info(g).expect("group evaluated");
+    let cyl_vol = rc_doc::PrimitiveKind::Cylinder
+        .default_primitive()
+        .mesh()
+        .volume();
+    let expected = 40.0 * 40.0 * 5.0 - cyl_vol * 5.0 / 20.0;
+    assert!(
+        (info.volume - expected).abs() < 1e-2,
+        "{} vs {expected}",
+        info.volume
+    );
+    snapshot(&mut h, "hole_group");
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("plate.stl");
+    h.state_mut().export_to(out.clone(), false);
+    settle(&mut h);
+    let f = rc_mesh::stl::read_file(&out).expect("exported file");
+    assert!(rc_mesh::topology::analyze(&f.mesh).is_watertight());
+    assert!((f.mesh.volume() - expected).abs() < 1e-2);
+    assert!(h.state().messages().iter().any(|m| m.contains("Exported")));
+}

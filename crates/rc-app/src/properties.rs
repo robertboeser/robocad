@@ -211,6 +211,9 @@ fn single(app: &mut RobocadApp, ui: &mut egui::Ui, id: NodeId) {
     if let NodeKind::Primitive(p) = node.kind {
         shape_section(ui, id, p, &mut commands);
     }
+    if node.is_group() {
+        group_info(app, ui, id);
+    }
     if let NodeKind::Imported { mesh, ref source } = node.kind {
         mesh_info(app, ui, mesh, source);
     }
@@ -336,6 +339,35 @@ fn resize(t: Transform, base: DVec3, old: DVec3, new: DVec3, lock: bool) -> Tran
         nt.scale[i] = sign[i] * new[i] / base[i];
     }
     nt
+}
+
+fn group_info(app: &RobocadApp, ui: &mut egui::Ui, id: NodeId) {
+    ui.add_space(6.0);
+    ui.label(RichText::new("Result").strong());
+    if let Some(err) = app.group_error(id) {
+        ui.colored_label(ui.visuals().warn_fg_color, format!("⚠ {err}"));
+        return;
+    }
+    let Some(info) = app.group_info(id) else {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label("Combining…");
+        });
+        return;
+    };
+    egui::Grid::new("props_group")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Triangles");
+            ui.label(info.triangle_count.to_string());
+            ui.end_row();
+            ui.label("Volume");
+            ui.label(format!("{:.2} cm³", info.volume / 1000.0));
+            ui.end_row();
+            ui.label("Area");
+            ui.label(format!("{:.2} cm²", info.area / 100.0));
+            ui.end_row();
+        });
 }
 
 fn mesh_info(app: &RobocadApp, ui: &mut egui::Ui, mesh: u64, source: &str) {

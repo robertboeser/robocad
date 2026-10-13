@@ -51,6 +51,11 @@ pub struct RobocadApp {
     pub snapping: bool,
     /// Meshes generated for primitives, keyed by display key.
     pub(crate) prim_meshes: HashMap<u64, Arc<rc_mesh::Mesh>>,
+    pub(crate) evaluator: rc_doc::eval::Evaluator,
+    pub(crate) groups: crate::scene_view::GroupResults,
+    /// What the viewport shows this frame.
+    pub(crate) items: Vec<crate::scene_view::Item>,
+    pub(crate) exports: Vec<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub scene_ui: crate::scene_panel::SceneUiState,
     pub props_ui: crate::properties::PropsUiState,
     color_index: usize,
@@ -76,6 +81,13 @@ impl RobocadApp {
             gizmo_changed: false,
             snapping: true,
             prim_meshes: HashMap::new(),
+            evaluator: {
+                let ctx = cc.egui_ctx.clone();
+                rc_doc::eval::Evaluator::new(move || ctx.request_repaint())
+            },
+            groups: crate::scene_view::GroupResults::default(),
+            items: Vec::new(),
+            exports: Vec::new(),
             scene_ui: crate::scene_panel::SceneUiState::default(),
             props_ui: crate::properties::PropsUiState::default(),
             color_index: 0,
@@ -219,6 +231,77 @@ impl RobocadApp {
         } else if let Some(vp) = self.viewport.as_mut() {
             vp.camera.frame(&b, 1.6);
         }
+    }
+
+    /// Asks for a file name and exports the scene (or the selection) in the background.
+    pub(crate) fn export_dialog(&mut self, selection_only: bool) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("STL file", &["stl"])
+            .set_file_name("model.stl")
+            .save_file()
+        else {
+            return;
+        };
+        self.export_to(path, selection_only);
+    }
+
+    /// Exports the visible scene (or selection) to an STL file on a worker thread.
+    pub fn export_to(&mut self, path: PathBuf, selection_only: bool) {
+        let doc = self.editor.doc().clone();
+        let ids = if selection_only {
+            self.editor.selection.ids().to_vec()
+        } else {
+            doc.roots.clone()
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut cache = rc_doc::eval::SolidCache::default();
+            let r = rc_doc::eval::export_mesh(&doc, &ids, &mut cache);
+            let result = if r.mesh.is_empty() {
+                Err("Nothing to export: no visible solid objects.".to_string())
+            } else {
+                rc_mesh::stl::write_file(&r.mesh, &path, rc_mesh::stl::StlFormat::Binary, "robocad")
+                    .map(|()| {
+                        let mut msg = format!(
+                            "Exported {} triangles to {}",
+                            r.mesh.triangle_count(),
+                            path.display()
+                        );
+                        let topo = rc_mesh::topology::analyze(&r.mesh);
+                        if !topo.is_watertight() {
+                            msg.push_str("\nWarning: the exported mesh is not watertight.");
+                        }
+                        for w in r.warnings {
+                            msg.push_str("\nWarning: ");
+                            msg.push_str(&w);
+                        }
+                        msg
+                    })
+                    .map_err(|e| format!("Export failed: {e}"))
+            };
+            let _ = tx.send(result);
+        });
+        self.exports.push(rx);
+    }
+
+    fn receive_exports(&mut self) {
+        let mut done = Vec::new();
+        for (i, rx) in self.exports.iter().enumerate() {
+            if let Ok(r) = rx.try_recv() {
+                self.messages.push(match r {
+                    Ok(m) | Err(m) => m,
+                });
+                done.push(i);
+            }
+        }
+        for i in done.into_iter().rev() {
+            self.exports.remove(i);
+        }
+    }
+
+    /// True while an export is running.
+    pub fn exporting(&self) -> bool {
+        !self.exports.is_empty()
     }
 
     pub fn set_plate_size(&mut self, size: [f64; 2]) {
@@ -375,6 +458,21 @@ impl RobocadApp {
                     self.open_dialog(ui.ctx());
                 }
                 ui.separator();
+                if ui.button("Export STL…").clicked() {
+                    ui.close();
+                    self.export_dialog(false);
+                }
+                if ui
+                    .add_enabled(
+                        !self.editor.selection.is_empty(),
+                        egui::Button::new("Export selection as STL…"),
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    self.export_dialog(true);
+                }
+                ui.separator();
                 if ui.button("Quit").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -467,20 +565,7 @@ impl RobocadApp {
     fn status_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let doc = self.editor.doc();
-            let tris: usize = doc
-                .nodes
-                .values()
-                .filter_map(|n| match n.kind {
-                    rc_doc::NodeKind::Imported { mesh, .. } => {
-                        doc.mesh(mesh).map(|m| m.triangle_count())
-                    }
-                    rc_doc::NodeKind::Primitive(p) => self
-                        .prim_meshes
-                        .get(&crate::interaction::prim_key(&p))
-                        .map(|m| m.triangle_count()),
-                    rc_doc::NodeKind::Group { .. } => None,
-                })
-                .sum::<usize>();
+            let tris = self.drawn_triangles();
             ui.label(format!("{} objects · {tris} triangles", doc.nodes.len()));
             let sel = self.editor.selection.ids();
             if !sel.is_empty() {
@@ -496,6 +581,14 @@ impl RobocadApp {
                     s.y,
                     s.z
                 ));
+            }
+            if !self.evaluation_idle() {
+                ui.separator();
+                ui.spinner();
+                ui.label("Combining…");
+            } else if let Some(ms) = self.groups.last_eval_ms {
+                ui.separator();
+                ui.label(format!("combined in {ms:.0} ms"));
             }
             if self.loader.pending() > 0 {
                 ui.separator();
@@ -539,6 +632,8 @@ impl eframe::App for RobocadApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive_loads();
+        self.receive_evaluations();
+        self.receive_exports();
         self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
         // A continuous edit ends when no widget is being dragged or edited.
