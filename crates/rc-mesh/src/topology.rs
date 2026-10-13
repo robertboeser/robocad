@@ -39,14 +39,15 @@ impl TopologyReport {
 
 /// Undirected edge key with the original direction encoded in the lowest bit of `dir`.
 #[derive(Clone, Copy)]
-struct EdgeRec {
-    key: u64,
-    tri: u32,
+pub(crate) struct EdgeRec {
+    pub(crate) key: u64,
+    pub(crate) tri: u32,
     /// `true` if the triangle traverses the edge from lower to higher index.
-    forward: bool,
+    pub(crate) forward: bool,
 }
 
-fn edge_records(mesh: &Mesh) -> Vec<EdgeRec> {
+/// All directed triangle edges, sorted by undirected key (degenerate edges skipped).
+pub(crate) fn edge_records(mesh: &Mesh) -> Vec<EdgeRec> {
     let mut edges: Vec<EdgeRec> = mesh
         .triangles
         .par_iter()

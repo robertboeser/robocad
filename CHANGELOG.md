@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### M2 — Viewer
+- `rc-render`: wgpu renderer with offscreen 4× MSAA target, reverse-Z depth, flat shading from screen-space derivatives, feature edges, diagnostic (open/non-manifold) edges, reddish back faces, procedural build plate grid with axes, background gradient.
+- Orbit camera (perspective/orthographic, zoom to cursor, pan, frame, standard views) with tests.
+- Headless rendering to PNG (`render_png` example), render benchmark, pixel test.
+- `robocad` app: menu, scene and properties panels, status bar, background STL loading (parallel analysis), drag & drop, file dialog, picking, axis widget, keyboard views, trackpad support, light/dark theme.
+
 ### M1 — Mesh core & STL I/O
 - `rc-mesh`: indexed `Mesh`, `Aabb`, exact vertex welding, volume/area/bbox, content hash.
 - Binary and ASCII STL reading (robust format detection, parallel binary parsing, tolerant ASCII parser) and atomic writing.

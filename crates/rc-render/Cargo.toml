@@ -4,8 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "wgpu renderer for robocad"
 
 [dependencies]
+rc-mesh.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+log.workspace = true
+# Must match the wgpu version used by egui-wgpu/eframe.
+wgpu = { version = "30", default-features = false, features = ["wgsl", "metal", "dx12", "vulkan", "gles"] }
+png = "0.18"
+pollster = "0.4"
 
 [lints]
 workspace = true

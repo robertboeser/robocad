@@ -5,6 +5,7 @@
 
 pub mod aabb;
 pub mod bvh;
+pub mod edges;
 pub mod mesh;
 pub mod stl;
 pub mod topology;

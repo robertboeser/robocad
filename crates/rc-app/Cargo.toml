@@ -4,15 +4,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "robocad desktop application"
 
 [[bin]]
 name = "robocad"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11", "persistence"] }
+rc-mesh.workspace = true
+rc-render.workspace = true
+glam.workspace = true
+rayon.workspace = true
 log.workspace = true
 env_logger.workspace = true
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11", "persistence"] }
+rfd = "0.17"
 
 [lints]
 workspace = true

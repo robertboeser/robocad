@@ -221,12 +221,12 @@ pub trait GeometryKernel: Send + Sync {
 
 ### 3.5 Rendering (rc-render)
 
-- Integrate with egui through `egui_wgpu::CallbackTrait` (paint callback in the central panel). Renderer owns its pipelines and a depth texture sized to the viewport rect; render into an offscreen color+depth target at native pixel scale with **4× MSAA**, then composite into egui's pass (or render directly if the callback pass supports depth — check the current egui-wgpu API).
+- *(As built)* The renderer draws into its **own offscreen texture** (sRGB, 4× MSAA, Depth32Float reverse-Z) and egui displays it as a native texture through a non-sRGB view of the same bytes. This keeps `rc-render` independent of egui and enables headless PNG rendering (`examples/render_png.rs`) and pixel tests.
 - **Flat shading without vertex duplication**: compute the face normal in the fragment shader from screen-space derivatives (`normalize(cross(dpdx(world_pos), dpdy(world_pos)))`). Keeps indexed meshes at their compact size.
 - Lighting: simple two-light + hemispheric ambient (or a matcap); readable, cheap.
 - **Feature edges**: computed once per mesh on CPU (dihedral angle > 30° or boundary), drawn as a line list on top with depth bias. Toggle in view menu.
 - **Holes**: drawn after opaque objects, translucent grey with depth test, no depth write (Tinkercad look).
-- **Selection**: tinted color + accent-colored feature edges; hover highlight.
+- **Selection**: rim (Fresnel-style) highlight in the accent colour plus accent-coloured feature edges; the object keeps its own colour. Hover highlight.
 - **Non-manifold diagnostics overlay**: boundary edges in red, non-manifold edges in orange.
 - Build plate: configurable size (default 220 × 220 mm), grid with 1 mm/10 mm lines drawn procedurally in a fragment shader (one quad, fades with distance). Axis indicator and a small **view cube** (clickable top/front/right/iso).
 - Camera: orbit around pivot, pan, zoom-to-cursor; perspective ↔ orthographic toggle; "frame selection" (F). Pivot = point under cursor on mouse-down (via BVH ray cast), falling back to scene center.
@@ -349,7 +349,7 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - Generate a 1 M-triangle test mesh in the benchmark (don't commit large files).
 - **Accept**: unit tests for every fixture; round-trip read→write→read is identical; cube volume = 1000 for a 10 mm cube within 1e-9; criterion benchmark shows 1 M-triangle binary parse+weld < 300 ms on M1.
 
-### M2 — Viewer
+### M2 — Viewer — ✅ DONE
 - `rc-render`: camera (orbit/pan/zoom-to-cursor, persp/ortho), mesh pipeline with derivative flat shading, MSAA, grid/build plate shader, feature edges, GPU mesh cache.
 - `rc-app`: eframe app with the three-panel layout (panels can be empty stubs), viewport callback, open STL via menu, file dialog and drag & drop, frame-all on load, status bar with tri count & bbox.
 - Reactive repaint (verify idle CPU ≈ 0 % with Activity Monitor).
