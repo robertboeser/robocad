@@ -234,29 +234,43 @@ impl RobocadApp {
     }
 
     pub(crate) fn receive_project_io(&mut self) {
-        if let Some(rx) = &self.project.loading
-            && let Ok(done) = rx.try_recv()
-        {
-            self.project.loading = None;
-            match done.result {
-                Ok((proj, analyses)) => self.finish_open(done.path, proj, analyses),
-                Err(e) => self
-                    .messages
-                    .push(format!("Could not open {}: {e}", done.path.display())),
-            }
-        }
-        if let Some(rx) = &self.project.saving
-            && let Ok((rev, path, result)) = rx.try_recv()
-        {
-            self.project.saving = None;
-            match result {
-                Ok(()) => {
-                    self.editor.mark_saved_at(rev);
-                    self.settings.add_recent(&path);
-                    self.discard_autosave();
+        let loaded = self.project.loading.as_ref().map(Receiver::try_recv);
+        match loaded {
+            Some(Ok(done)) => {
+                self.project.loading = None;
+                match done.result {
+                    Ok((proj, analyses)) => self.finish_open(done.path, proj, analyses),
+                    Err(e) => self
+                        .messages
+                        .push(format!("Could not open {}: {e}", done.path.display())),
                 }
-                Err(e) => self.messages.push(format!("Saving failed: {e}")),
             }
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                self.project.loading = None;
+                self.messages
+                    .push("Opening the project failed because of an internal error.".into());
+            }
+            _ => {}
+        }
+        let saved = self.project.saving.as_ref().map(Receiver::try_recv);
+        match saved {
+            Some(Ok((rev, path, result))) => {
+                self.project.saving = None;
+                match result {
+                    Ok(()) => {
+                        self.editor.mark_saved_at(rev);
+                        self.settings.add_recent(&path);
+                        self.discard_autosave();
+                    }
+                    Err(e) => self.messages.push(format!("Saving failed: {e}")),
+                }
+            }
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                self.project.saving = None;
+                self.messages
+                    .push("Saving failed because of an internal error.".into());
+            }
+            _ => {}
         }
         if let Some(rx) = &self.project.autosaving
             && rx.try_recv().is_ok()

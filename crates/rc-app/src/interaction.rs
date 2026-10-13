@@ -419,46 +419,64 @@ impl RobocadApp {
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             for kind in PrimitiveKind::ALL {
-                let r = ui
-                    .add(egui::Button::new(kind.name()).sense(egui::Sense::click_and_drag()))
-                    .on_hover_text(format!(
-                        "Click to add a {0} at the centre, or drag it onto the plate",
-                        kind.name().to_lowercase()
-                    ));
+                let icon = match kind {
+                    PrimitiveKind::Box => crate::icons::Icon::Box,
+                    PrimitiveKind::Cylinder => crate::icons::Icon::Cylinder,
+                    PrimitiveKind::Cone => crate::icons::Icon::Cone,
+                    PrimitiveKind::Sphere => crate::icons::Icon::Sphere,
+                    PrimitiveKind::Torus => crate::icons::Icon::Torus,
+                    PrimitiveKind::Wedge => crate::icons::Icon::Wedge,
+                };
+                let r = crate::icons::button(ui, icon, kind.name(), false).on_hover_text(format!(
+                    "Click to add a {0} at a free spot, or drag it onto the plate",
+                    kind.name().to_lowercase()
+                ));
                 r.dnd_set_drag_payload(kind);
                 if r.clicked() {
                     self.add_primitive(kind, None);
                 }
             }
-            if ui.button("Text").on_hover_text("Add 3D text").clicked() {
+            if crate::icons::button(ui, crate::icons::Icon::Text, "Text", false)
+                .on_hover_text("Add 3D text")
+                .clicked()
+            {
                 self.add_text();
             }
             ui.separator();
-            for (mode, label, key) in [
-                (GizmoMode::Move, "Move", "W"),
-                (GizmoMode::Rotate, "Rotate", "E"),
-                (GizmoMode::Scale, "Scale", "R"),
+            for (mode, icon, label, key) in [
+                (GizmoMode::Move, crate::icons::Icon::Move, "Move", "W"),
+                (GizmoMode::Rotate, crate::icons::Icon::Rotate, "Rotate", "E"),
+                (GizmoMode::Scale, crate::icons::Icon::Scale, "Scale", "R"),
             ] {
-                if ui
-                    .selectable_label(self.gizmo.mode == mode, label)
+                let active = self.gizmo.mode == mode && self.tool == Tool::Select;
+                if crate::icons::button(ui, icon, label, active)
                     .on_hover_text(format!("{label} tool ({key})"))
                     .clicked()
                 {
                     self.gizmo.mode = mode;
+                    self.tool = Tool::Select;
                 }
             }
             ui.separator();
-            if ui
-                .selectable_label(self.tool == Tool::Measure, "Measure")
-                .on_hover_text("Click two points to measure (M). Shift: snap off.")
-                .clicked()
+            if crate::icons::button(
+                ui,
+                crate::icons::Icon::Measure,
+                "Measure",
+                self.tool == Tool::Measure,
+            )
+            .on_hover_text("Click two points to measure (M). Shift: snap off.")
+            .clicked()
             {
                 self.toggle_tool(Tool::Measure);
             }
-            if ui
-                .selectable_label(self.tool == Tool::LayFlat, "Lay flat")
-                .on_hover_text("Click a face to put it on the plate (L)")
-                .clicked()
+            if crate::icons::button(
+                ui,
+                crate::icons::Icon::LayFlat,
+                "Lay flat",
+                self.tool == Tool::LayFlat,
+            )
+            .on_hover_text("Click a face to put it on the plate (L)")
+            .clicked()
             {
                 self.toggle_tool(Tool::LayFlat);
             }

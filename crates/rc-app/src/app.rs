@@ -114,6 +114,7 @@ pub struct RobocadApp {
     pub tool: crate::interaction::Tool,
     pub(crate) measure_points: Vec<crate::interaction::MeasurePoint>,
     pub last_measurement: Option<crate::interaction::Measurement>,
+    pub(crate) help: crate::help::HelpState,
     pub scene_ui: crate::scene_panel::SceneUiState,
     pub props_ui: crate::properties::PropsUiState,
     color_index: usize,
@@ -167,6 +168,7 @@ impl RobocadApp {
             tool: crate::interaction::Tool::Select,
             measure_points: Vec::new(),
             last_measurement: None,
+            help: crate::help::HelpState::default(),
             scene_ui: crate::scene_panel::SceneUiState::default(),
             props_ui: crate::properties::PropsUiState::default(),
             color_index: 0,
@@ -519,18 +521,21 @@ impl RobocadApp {
     }
 
     fn receive_exports(&mut self) {
-        let mut done = Vec::new();
-        for (i, rx) in self.exports.iter().enumerate() {
-            if let Ok(r) = rx.try_recv() {
-                self.messages.push(match r {
+        let mut msgs = Vec::new();
+        self.exports.retain(|rx| match rx.try_recv() {
+            Ok(r) => {
+                msgs.push(match r {
                     Ok(m) | Err(m) => m,
                 });
-                done.push(i);
+                false
             }
-        }
-        for i in done.into_iter().rev() {
-            self.exports.remove(i);
-        }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                msgs.push("Export failed because of an internal error.".to_string());
+                false
+            }
+        });
+        self.messages.extend(msgs);
     }
 
     /// True while an export is running.
@@ -714,26 +719,29 @@ impl RobocadApp {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 let ctx = ui.ctx().clone();
-                if ui.button("New  ⌘N").clicked() {
+                if ui.button(crate::help::keys("New  ⌘N")).clicked() {
                     ui.close();
                     self.request(crate::project_ui::AfterPrompt::New, &ctx);
                 }
-                if ui.button("Open…  ⌘O").clicked() {
+                if ui.button(crate::help::keys("Open…  ⌘O")).clicked() {
                     ui.close();
                     self.open_dialog(&ctx);
                 }
                 self.recent_menu(ui);
                 ui.separator();
-                if ui.button("Save  ⌘S").clicked() {
+                if ui.button(crate::help::keys("Save  ⌘S")).clicked() {
                     ui.close();
                     self.save();
                 }
-                if ui.button("Save as…  ⇧⌘S").clicked() {
+                if ui.button(crate::help::keys("Save as…  Shift+⌘S")).clicked() {
                     ui.close();
                     self.save_as_dialog();
                 }
                 ui.separator();
-                if ui.button("Import STL / OBJ…  ⌘I").clicked() {
+                if ui
+                    .button(crate::help::keys("Import STL / OBJ…  ⌘I"))
+                    .clicked()
+                {
                     ui.close();
                     self.import_dialog(&ctx);
                 }
@@ -768,12 +776,12 @@ impl RobocadApp {
                     self.export_dialog(true);
                 }
                 ui.separator();
-                if ui.button("Preferences…  ⌘,").clicked() {
+                if ui.button(crate::help::keys("Preferences…  ⌘,")).clicked() {
                     ui.close();
                     self.project.show_preferences = true;
                 }
                 ui.separator();
-                if ui.button("Quit  ⌘Q").clicked() {
+                if ui.button(crate::help::keys("Quit  ⌘Q")).clicked() {
                     ui.close();
                     self.request(crate::project_ui::AfterPrompt::Quit, &ctx);
                 }
@@ -786,7 +794,7 @@ impl RobocadApp {
                 if ui
                     .add_enabled(
                         self.editor.can_undo(),
-                        egui::Button::new(format!("{undo}  ⌘Z")),
+                        egui::Button::new(crate::help::keys(&format!("{undo}  ⌘Z"))),
                     )
                     .clicked()
                 {
@@ -800,7 +808,7 @@ impl RobocadApp {
                 if ui
                     .add_enabled(
                         self.editor.can_redo(),
-                        egui::Button::new(format!("{redo}  ⇧⌘Z")),
+                        egui::Button::new(crate::help::keys(&format!("{redo}  Shift+⌘Z"))),
                     )
                     .clicked()
                 {
@@ -811,19 +819,22 @@ impl RobocadApp {
                 let has_sel = !self.editor.selection.is_empty();
                 let items: [(&str, Action); 5] = [
                     ("Duplicate  ⌘D", Self::duplicate_selection),
-                    ("Delete  ⌫", Self::delete_selection),
+                    ("Delete  Del", Self::delete_selection),
                     ("Group  ⌘G", Self::group_selection),
-                    ("Ungroup  ⇧⌘G", Self::ungroup_selection),
+                    ("Ungroup  Shift+⌘G", Self::ungroup_selection),
                     ("Toggle solid / hole  H", Self::toggle_hole_selection),
                 ];
                 for (label, f) in items {
-                    if ui.add_enabled(has_sel, egui::Button::new(label)).clicked() {
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new(crate::help::keys(label)))
+                        .clicked()
+                    {
                         f(self);
                         ui.close();
                     }
                 }
                 ui.separator();
-                if ui.button("Select all  ⌘A").clicked() {
+                if ui.button(crate::help::keys("Select all  ⌘A")).clicked() {
                     self.select_all();
                     ui.close();
                 }
@@ -833,7 +844,7 @@ impl RobocadApp {
                     self.frame_selection();
                     ui.close();
                 }
-                if ui.button("Frame all  ⇧F").clicked() {
+                if ui.button("Frame all  Shift+F").clicked() {
                     self.frame_all();
                     ui.close();
                 }
@@ -861,6 +872,7 @@ impl RobocadApp {
                     ui.close();
                 }
             });
+            self.help_menu(ui);
         });
     }
 
@@ -958,6 +970,7 @@ impl eframe::App for RobocadApp {
             .show(ui, |ui| crate::properties::show(self, ui));
         self.messages_window(&ctx);
         self.project_dialogs(&ctx);
+        self.help_windows(&ctx);
         self.maybe_autosave();
         self.persist_settings();
         egui::CentralPanel::default()

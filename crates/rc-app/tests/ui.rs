@@ -19,6 +19,12 @@ fn temp_dirs() -> (tempfile::TempDir, rc_app::settings::AppDirs) {
         config: t.path().join("config"),
         data: t.path().join("data"),
     };
+    // Skip the first-run card so it does not cover the viewport in tests.
+    rc_app::settings::Settings {
+        hints_shown: true,
+        ..Default::default()
+    }
+    .save(&dirs.config);
     (t, dirs)
 }
 
@@ -772,4 +778,28 @@ f 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 8 4 1 5\n",
         h.state().messages()
     );
     assert!(std::fs::metadata(&out).unwrap().len() > 300);
+}
+
+#[test]
+fn first_run_card_and_shortcut_window() {
+    let t = tempfile::tempdir().unwrap();
+    let dirs = rc_app::settings::AppDirs {
+        config: t.path().join("config"),
+        data: t.path().join("data"),
+    };
+    let Some(mut h) = harness_with(dirs.clone()) else {
+        return;
+    };
+    h.run_steps(2);
+    snapshot(&mut h, "first_run");
+    h.get_by_label("Got it").click();
+    h.run_steps(2);
+    assert!(h.state().settings.hints_shown);
+    h.key_press(Key::F1);
+    h.run_steps(2);
+    snapshot(&mut h, "shortcuts");
+    assert!(h.query_by_label("Keyboard shortcuts").is_some());
+    drop(h);
+    let Some(h2) = harness_with(dirs) else { return };
+    assert!(h2.state().settings.hints_shown, "dismissal is remembered");
 }

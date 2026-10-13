@@ -400,11 +400,11 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - 3MF export (single mesh per object, units mm, colors). OBJ import.
 - **Accept**: text "robocad" exports as one watertight solid; arrays of 10×10 cylinders subtracted from a plate evaluate in < 500 ms; 3MF opens in PrusaSlicer and Bambu Studio.
 
-### M9 — Polish, performance, packaging
+### M9 — Polish, performance, packaging — ✅ DONE
 - Profiling pass (`cargo flamegraph`, `tracy` optional) against §1 targets; fix regressions. Add a `perf` CI job that runs criterion benchmarks and fails on > 20 % regression (optional, can be manual).
-- Keyboard shortcut help overlay, first-run hints, tooltips on every button, consistent icons (embedded SVG, e.g. Lucide/Phosphor, MIT-licensed).
+- Keyboard shortcut help overlay, first-run hints, tooltips on every button, consistent icons (*as built*: small vector icons painted with egui shapes in `rc-app/src/icons.rs` — no image assets or SVG dependencies).
 - Error handling review: no panics on user input; every failure is a toast or panel message.
-- Packaging: macOS `.app` bundle + DMG (`cargo-bundle` or a script; universal binary optional; codesigning/notarization documented but optional), Windows `.exe` (+ optional MSI via `cargo-wix`), Linux AppImage/tarball. File association for `.rcad` and `.stl` (optional).
+- Packaging: macOS `.app` bundle + DMG (*as built*: `scripts/package-macos.sh`, optional universal binary, ad-hoc signing; notarization documented in `docs/release.md`), Windows zip (`scripts/package-windows.ps1`), Linux tarball with `.desktop` file (`scripts/package-linux.sh`). Document types for `.rcad`/`.stl`/`.obj` declared in `packaging/Info.plist.in`.
 - Release workflow in GitHub Actions that builds artifacts on tags.
 - **Accept**: all §1 targets met and recorded in `docs/performance.md`; a new user can follow README to download, open an STL, add a hole, and export in under 5 minutes.
 

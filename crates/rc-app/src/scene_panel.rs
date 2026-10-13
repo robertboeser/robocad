@@ -23,7 +23,12 @@ pub fn show(app: &mut RobocadApp, ui: &mut egui::Ui) {
     });
     ui.separator();
     if app.editor.doc().roots.is_empty() {
-        ui.label(RichText::new("Drop an STL file here\nor use File → Import (⌘O).").weak());
+        ui.label(
+            RichText::new(crate::help::keys(
+                "Drop an STL file here\nor use File > Import (⌘O).",
+            ))
+            .weak(),
+        );
         return;
     }
     let mut pending: Vec<Command> = Vec::new();

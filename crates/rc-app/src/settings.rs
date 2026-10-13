@@ -32,8 +32,8 @@ impl MousePreset {
     pub fn label(self) -> &'static str {
         match self {
             Self::Default => "robocad (right = orbit, middle = pan)",
-            Self::Blender => "Blender (middle = orbit, ⇧ middle = pan)",
-            Self::Fusion => "Fusion 360 (⇧ middle = orbit, middle = pan)",
+            Self::Blender => "Blender (middle = orbit, Shift+middle = pan)",
+            Self::Fusion => "Fusion 360 (Shift+middle = orbit, middle = pan)",
         }
     }
 }
@@ -55,6 +55,8 @@ pub struct Settings {
     /// Autosave interval in minutes (0 = off).
     pub autosave_minutes: u32,
     pub recent_files: Vec<PathBuf>,
+    /// The first-steps card was dismissed.
+    pub hints_shown: bool,
 }
 
 impl Default for Settings {
@@ -71,6 +73,7 @@ impl Default for Settings {
             snapping: true,
             autosave_minutes: 2,
             recent_files: Vec::new(),
+            hints_shown: false,
         }
     }
 }

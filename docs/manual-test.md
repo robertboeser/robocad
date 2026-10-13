@@ -62,3 +62,9 @@ Run before tagging a release. Use a release build: `cargo run --release -p rc-ap
 - [ ] Lay flat (L): clicking a face puts it on the plate.
 - [ ] File → Export 3MF opens in PrusaSlicer / Bambu Studio with one object per part and colours.
 - [ ] File → Import accepts OBJ files.
+
+## Polish & packaging (M9)
+- [ ] First start shows the Welcome card; "Got it" hides it for good; Help > Show first steps again brings it back.
+- [ ] F1 or ? opens the shortcut list; on Windows/Linux it shows Ctrl instead of ⌘.
+- [ ] `scripts/package-macos.sh` builds dist/robocad.app with the icon; the DMG mounts and the app starts from /Applications.
+- [ ] The release workflow on a test tag produces DMG, tar.gz and zip.

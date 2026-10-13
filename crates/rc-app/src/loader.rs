@@ -47,7 +47,9 @@ impl Loader {
         self.pending += 1;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let result = load_file(path);
+            let p = path.clone();
+            let result = std::panic::catch_unwind(move || load_file(path))
+                .unwrap_or_else(|_| Err((p, "internal error while reading the file".into())));
             let _ = tx.send(result);
             wake();
         });

@@ -25,4 +25,7 @@ The Command Line Tools install has a stale C++ header dir. Export this before bu
 - Keep test fixtures tiny (< 100 KB); generate large meshes in code.
 - Record significant decisions as ADRs in `docs/adr/NNNN-title.md`.
 - Every new dependency must be justified in the commit message.
+- Never call `ctx`/`ui.ctx()` methods inside `ctx.input(..)`/`input_mut(..)` closures — it deadlocks (egui RwLock).
+- Shortcut labels go through `crate::help::keys()` (⌘ on macOS, Ctrl+ elsewhere); egui's default fonts lack ⇧ ⌫ → glyphs.
+- UI tests: `cargo test -p rc-app --test ui`; set `ROBOCAD_SNAPSHOT_DIR=/some/dir` to save rendered frames.
 - egui/eframe 0.36: `eframe::App` uses `fn ui(&mut self, ui: &mut egui::Ui, frame)`; panels are `egui::Panel::left(id)` etc. and take `&mut Ui`.

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### M9 — Polish, performance, packaging
+- Painted toolbar icons, Help menu with a keyboard-shortcut reference (F1 / ?), first-run "Welcome" card, platform-aware shortcut labels (⌘ on macOS, Ctrl elsewhere).
+- Robustness: background jobs survive panics and report failures; fixed a context deadlock caught by the UI tests.
+- Performance: conditional repair steps on import, parallel BVH build; all §1 targets met (see docs/performance.md).
+- App icon rendered with robocad's own renderer; macOS app bundle + DMG, Linux tarball and Windows zip scripts; GitHub release workflow on tags; manual benchmark job in CI.
+- README with screenshots, quick start and CLI reference; docs/release.md.
+
 ### M8 — Power features
 - Patterns on groups: mirror (flip in place or mirror copy), linear/grid arrays and circular arrays, evaluated by the kernel; bounds include copies; editable in Properties; Pattern menu in the toolbar.
 - Text objects: bundled Lato Bold (OFL), kerning, multi-line, non-zero fill for letter holes, Manifold extrusion; letter height and depth editable.

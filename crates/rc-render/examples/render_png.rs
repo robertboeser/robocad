@@ -1,7 +1,8 @@
 //! Renders an STL file to a PNG without opening a window.
 //!
 //! Usage: `cargo run -p rc-render --example render_png -- <in.stl> <out.png> [width height] [view]`
-//! where `view` is one of iso, front, top, right (default iso).
+//! where `view` is one of iso, front, top, right (default iso), or `icon` for an app icon
+//! (iso view, no grid, rounded transparent corners).
 
 use std::sync::Arc;
 
@@ -23,6 +24,7 @@ fn main() {
     });
     let w: u32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1200);
     let h: u32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(800);
+    let icon = args.get(5).map(String::as_str) == Some("icon");
     let view = match args.get(5).map(String::as_str) {
         Some("front") => StandardView::Front,
         Some("top") => StandardView::Top,
@@ -48,7 +50,13 @@ fn main() {
         selected: false,
         hovered: false,
     }];
-    let style = SceneStyle::dark();
+    let mut style = SceneStyle::dark();
+    if icon {
+        style.show_grid = false;
+        style.bg_top = [0.10, 0.16, 0.30, 1.0];
+        style.bg_bottom = [0.02, 0.03, 0.06, 1.0];
+        camera.distance *= 1.08;
+    }
     renderer.render(
         &device,
         &queue,

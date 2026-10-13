@@ -1,5 +1,21 @@
 # Performance measurements
 
+## Summary against the targets in PLAN.md §1 (M9, release build, Apple Silicon)
+
+| Metric | Target | Measured | Status |
+|---|---|---|---|
+| Start to interactive window | < 0.5 s | ~0.28 s (first launch after build ~0.5 s) | ✅ |
+| Idle CPU | ~0 % | 0.0–0.7 % right after start, 0.0 % idle | ✅ |
+| RAM, empty scene | < 120 MB | ~94 MB | ✅ |
+| Load binary STL, 1M triangles (parse, safe repair, edges, BVH, analysis) | < 0.5 s | ~0.32 s | ✅ |
+| Viewport, 5M triangles | ≥ 60 fps | ~2 ms/frame (~500 fps) at 2560×1600, 4× MSAA | ✅ |
+| Boolean of two 100k-triangle meshes | < 150 ms | ~21 ms (difference), ~26 ms (union) | ✅ |
+| Release binary size | < 25 MB | ~13.4 MB (`robocad`), DMG 8.9 MB | ✅ |
+
+M9 performance pass: the import-time safe repair now skips steps the analysis shows are not
+needed (clean meshes cost one analysis; 1M-triangle import fix-up 530 → 173 ms), and the BVH is
+built in parallel (250 → 62 ms).
+
 Machine: Apple Silicon (M-series), macOS, release/bench profile. Benchmarks: `cargo bench -p rc-mesh`.
 
 ## rc-mesh (1,000,000-triangle UV sphere)
@@ -9,7 +25,7 @@ Machine: Apple Silicon (M-series), macOS, release/bench profile. Benchmarks: `ca
 | Binary STL parse + exact weld | ~30 ms | < 300 ms |
 | Binary STL write | ~26 ms | — |
 | Topology analysis | ~42 ms | — |
-| BVH build (binned SAH) | ~250 ms | — (runs on worker thread) |
+| BVH build (binned SAH; parallel since M9: ~62 ms) | ~250 ms | — (runs on worker thread) |
 | Volume + area + bbox | ~23 ms | — |
 
 ## Viewer (M2)
@@ -48,3 +64,9 @@ Release app after M5: binary 11.8 MB (target < 25 MB), warm start ~85 ms, empty-
 | Operation | Time | Target |
 |---|---|---|
 | 110 × 110 mm plate minus a 10 × 10 grid of cylinders (release) | ~30 ms | < 500 ms |
+
+## M9 tools
+
+- `cargo run --release -p rc-mesh --example repair_timing -- file.stl` — time per repair step
+- `cargo run --release -p rc-mesh --example bvh_timing -- file.stl`
+- CI: run the "CI" workflow manually with *bench* enabled to run all benchmarks.

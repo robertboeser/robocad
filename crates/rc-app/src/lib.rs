@@ -2,6 +2,8 @@
 
 pub mod app;
 pub mod gizmo;
+pub mod help;
+pub mod icons;
 pub mod interaction;
 pub mod loader;
 pub mod project_ui;

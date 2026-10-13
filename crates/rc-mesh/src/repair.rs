@@ -27,7 +27,8 @@ pub struct RepairOptions {
 impl RepairOptions {
     /// Safe, lossless-in-practice fixes applied automatically on import.
     pub const SAFE: Self = Self {
-        weld_tolerance: 1e-7,
+        // The loader already merged identical vertices; near-welding is left to Repair.
+        weld_tolerance: 0.0,
         fill_holes: false,
         max_hole_edges: 0,
         min_component_triangles: 0,
@@ -99,14 +100,21 @@ impl RepairReport {
     }
 }
 
-/// Runs the repair pipeline.
+/// Runs the repair pipeline. Steps run only when the analysis shows they are needed, so clean
+/// meshes cost a single analysis.
 pub fn repair(mesh: &Mesh, opts: &RepairOptions) -> (Mesh, RepairReport) {
+    let before = analyze(mesh);
     let mut r = RepairReport {
-        before: analyze(mesh),
+        before,
+        after: before,
         ..RepairReport::default()
     };
+    if before.is_clean_solid() && opts.min_component_triangles == 0 && mesh.volume() > 0.0 {
+        return (mesh.clone(), r);
+    }
     let mut m = mesh.clone();
-    if opts.weld_tolerance > 0.0 {
+    // Closing tiny gaps only helps meshes with open edges.
+    if opts.weld_tolerance > 0.0 && before.boundary_edges > 0 {
         let tol = f64::from(m.aabb().diagonal()) * opts.weld_tolerance;
         r.merged_vertices = weld_epsilon(&mut m, tol);
     }
@@ -115,13 +123,21 @@ pub fn repair(mesh: &Mesh, opts: &RepairOptions) -> (Mesh, RepairReport) {
     if opts.min_component_triangles > 0 {
         r.removed_parts = remove_small_components(&mut m, opts.min_component_triangles);
     }
-    r.split_vertices = split_touching(&mut m);
-    r.flipped_triangles = orient_consistently(&mut m);
-    if opts.fill_holes {
+    let mut now = analyze(&m);
+    if now.non_manifold_edges > 0 || now.non_manifold_vertices > 0 {
+        r.split_vertices = split_touching(&mut m);
+        now = analyze(&m);
+    }
+    if now.inconsistent_edges > 0 {
+        r.flipped_triangles = orient_consistently(&mut m);
+    }
+    if opts.fill_holes && now.boundary_edges > 0 {
         let (filled, skipped) = fill_holes(&mut m, opts.max_hole_edges);
         r.holes_filled = filled;
         r.holes_skipped = skipped;
-        r.flipped_triangles += orient_consistently(&mut m);
+        if filled > 0 {
+            r.flipped_triangles += orient_consistently(&mut m);
+        }
     }
     r.flipped_parts = orient_outward(&mut m);
     compact(&mut m);

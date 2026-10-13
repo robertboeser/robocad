@@ -636,7 +636,7 @@ fn multi(app: &mut RobocadApp, ui: &mut egui::Ui, sel: &[NodeId], n: usize) {
             app.apply(Command::SetRole(sel.to_vec(), Role::Hole));
         }
     });
-    if ui.button("Group (⌘G)").clicked() {
+    if ui.button(crate::help::keys("Group (⌘G)")).clicked() {
         app.group_selection();
     }
     ui.add_space(6.0);

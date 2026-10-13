@@ -34,10 +34,12 @@ pub struct RayHit {
 #[derive(Clone, Copy, Debug)]
 struct Node {
     bounds: Aabb,
-    /// Leaf: first index into `order`. Internal: index of the left child (right = left + 1).
+    /// Leaf: first index into `order`. Internal: index of the left child.
     start: u32,
     /// Number of triangles for leaves, 0 for internal nodes.
     count: u32,
+    /// Internal: index of the right child.
+    right: u32,
 }
 
 /// A flat, SAH-built BVH. It stores triangle indices only; the mesh is passed to queries.
@@ -51,56 +53,21 @@ const BINS: usize = 12;
 const LEAF_MAX: usize = 4;
 
 impl Bvh {
-    /// Builds a BVH for all triangles of `mesh`.
+    /// Builds a BVH for all triangles of `mesh`. Large subtrees are built in parallel.
     pub fn build(mesh: &Mesh) -> Self {
+        use rayon::prelude::*;
         let n = mesh.triangles.len();
         if n == 0 {
             return Self::default();
         }
         let bounds: Vec<Aabb> = (0..n)
+            .into_par_iter()
             .map(|i| Aabb::from_points(mesh.triangle(i)))
             .collect();
-        let centroids: Vec<Vec3> = bounds.iter().map(Aabb::center).collect();
-        let mut bvh = Self {
-            nodes: Vec::with_capacity(2 * n / LEAF_MAX + 1),
-            order: (0..n as u32).collect(),
-        };
-        bvh.nodes.push(Node {
-            bounds: Aabb::EMPTY,
-            start: 0,
-            count: n as u32,
-        });
-        let mut stack = vec![0usize];
-        while let Some(ni) = stack.pop() {
-            let (start, count) = (bvh.nodes[ni].start as usize, bvh.nodes[ni].count as usize);
-            let items = &mut bvh.order[start..start + count];
-            let node_bounds = items
-                .iter()
-                .fold(Aabb::EMPTY, |b, &t| b.union(&bounds[t as usize]));
-            bvh.nodes[ni].bounds = node_bounds;
-            if count <= LEAF_MAX {
-                continue;
-            }
-            let Some(mid) = split(items, &bounds, &centroids) else {
-                continue;
-            };
-            let left = bvh.nodes.len();
-            bvh.nodes.push(Node {
-                bounds: Aabb::EMPTY,
-                start: start as u32,
-                count: mid as u32,
-            });
-            bvh.nodes.push(Node {
-                bounds: Aabb::EMPTY,
-                start: (start + mid) as u32,
-                count: (count - mid) as u32,
-            });
-            bvh.nodes[ni].start = left as u32;
-            bvh.nodes[ni].count = 0;
-            stack.push(left);
-            stack.push(left + 1);
-        }
-        bvh
+        let centroids: Vec<Vec3> = bounds.par_iter().map(Aabb::center).collect();
+        let mut order: Vec<u32> = (0..n as u32).collect();
+        let nodes = build_rec(&mut order, 0, &bounds, &centroids);
+        Self { nodes, order }
     }
 
     pub fn bounds(&self) -> Aabb {
@@ -134,7 +101,7 @@ impl Bvh {
                 }
             } else {
                 // Visit the nearer child first.
-                let (l, r) = (node.start, node.start + 1);
+                let (l, r) = (node.start, node.right);
                 let dl = self.nodes[l as usize]
                     .bounds
                     .ray_entry(ray.origin, inv, limit);
@@ -184,10 +151,70 @@ impl Bvh {
                 }
             } else {
                 stack.push(node.start);
-                stack.push(node.start + 1);
+                stack.push(node.right);
             }
         }
     }
+}
+
+/// Subtrees with more triangles than this are built on separate threads.
+const PARALLEL_MIN: usize = 16_384;
+
+/// Builds the subtree for `items` (which start at `offset` in the final order). The returned
+/// nodes have the subtree root at index 0 and child indices relative to the returned vector.
+fn build_rec(items: &mut [u32], offset: u32, bounds: &[Aabb], centroids: &[Vec3]) -> Vec<Node> {
+    let node_bounds = items
+        .iter()
+        .fold(Aabb::EMPTY, |b, &t| b.union(&bounds[t as usize]));
+    let leaf = |count: usize| {
+        vec![Node {
+            bounds: node_bounds,
+            start: offset,
+            count: count as u32,
+            right: 0,
+        }]
+    };
+    if items.len() <= LEAF_MAX {
+        return leaf(items.len());
+    }
+    let Some(mid) = split(items, bounds, centroids) else {
+        return leaf(items.len());
+    };
+    let len = items.len();
+    let (l_items, r_items) = items.split_at_mut(mid);
+    let (left, right) = if len >= PARALLEL_MIN {
+        rayon::join(
+            || build_rec(l_items, offset, bounds, centroids),
+            || build_rec(r_items, offset + mid as u32, bounds, centroids),
+        )
+    } else {
+        (
+            build_rec(l_items, offset, bounds, centroids),
+            build_rec(r_items, offset + mid as u32, bounds, centroids),
+        )
+    };
+    let mut nodes = Vec::with_capacity(1 + left.len() + right.len());
+    let right_root = 1 + left.len() as u32;
+    nodes.push(Node {
+        bounds: node_bounds,
+        start: 1,
+        count: 0,
+        right: right_root,
+    });
+    let shift = |n: &Node, by: u32| {
+        if n.count == 0 {
+            Node {
+                start: n.start + by,
+                right: n.right + by,
+                ..*n
+            }
+        } else {
+            *n
+        }
+    };
+    nodes.extend(left.iter().map(|n| shift(n, 1)));
+    nodes.extend(right.iter().map(|n| shift(n, right_root)));
+    nodes
 }
 
 /// Binned SAH split. Partitions `items` and returns the split position, or `None` for a leaf.
