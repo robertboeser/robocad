@@ -46,3 +46,11 @@ Run before tagging a release. Use a release build: `cargo run --release -p rc-ap
 - [ ] "Repair mesh" fixes it in the background, shows a report, and ⌘Z restores the original.
 - [ ] View → Show overhangs tints steep undersides red.
 - [ ] File → Import options: inch units scale a 1-unit cube to 25.4 mm; place-on-plate centres imports.
+
+## Projects & settings (M7)
+- [ ] ⌘S on a new document asks for a file name; the title shows the name and • for unsaved changes.
+- [ ] Open recent lists saved projects; reopening restores objects and the camera.
+- [ ] Closing the window, ⌘N or ⌘O with unsaved changes asks Save / Don't save / Cancel.
+- [ ] Force-quit (Activity Monitor) after editing for > 2 minutes: the next start offers to restore.
+- [ ] Preferences: theme, UI scale and mouse preset apply immediately and persist after restart.
+- [ ] `robocad-cli export project.rcad out.stl` writes the same result as File → Export STL.

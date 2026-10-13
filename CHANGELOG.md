@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### M7 — Projects & settings
+- `.rcad` project files (ZIP: `document.json` + raw meshes + thumbnail), atomic writes, checksum and tree validation, versioned format with migration hook and a committed v1 fixture.
+- App: New / Open (projects and STL) / Open recent / Save / Save As, background load and save, window title with file name and • for unsaved changes, unsaved-changes prompt on New, Open and Quit, autosave (default every 2 minutes) with crash recovery on next start.
+- Settings in the OS config directory: theme, UI scale, mouse preset (robocad / Blender / Fusion 360), defaults for new projects, autosave interval, import options, recent files; Preferences window (⌘,).
+- `robocad-cli info <project.rcad>` and `robocad-cli export <project.rcad> <out.stl>`.
+
 ### M6 — Inspect & Repair
 - `rc-mesh::repair`: epsilon weld, degenerate and duplicate removal, separation of touching parts (bow-tie vertices, shared edges), orientation fix, outward orientation, hole filling with ear clipping, optional small-part removal; idempotent, with a change report.
 - Safe fixes run automatically on import and are listed under the mesh info; the full Repair runs in the background, replaces the mesh (undoable) and reports what changed.

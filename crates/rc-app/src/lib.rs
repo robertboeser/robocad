@@ -4,9 +4,11 @@ pub mod app;
 pub mod gizmo;
 pub mod interaction;
 pub mod loader;
+pub mod project_ui;
 pub mod properties;
 pub mod scene_panel;
 pub mod scene_view;
+pub mod settings;
 pub mod viewport;
 
 pub use app::RobocadApp;

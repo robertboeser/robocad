@@ -13,9 +13,12 @@ glam.workspace = true
 slotmap.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

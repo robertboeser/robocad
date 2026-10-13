@@ -30,6 +30,7 @@ pub struct Viewport {
     renderer: Renderer,
     texture: Option<(egui::TextureId, u64)>,
     pub camera: OrbitCamera,
+    pub mouse: crate::settings::MousePreset,
 }
 
 impl Viewport {
@@ -40,6 +41,7 @@ impl Viewport {
             renderer,
             texture: None,
             camera: OrbitCamera::default(),
+            mouse: crate::settings::MousePreset::Default,
         }
     }
 
@@ -149,15 +151,31 @@ impl Viewport {
     }
 
     fn handle_input(&mut self, ui: &egui::Ui, response: &egui::Response, rect: Rect, size: DVec2) {
+        use crate::settings::MousePreset as P;
         let modifiers = ui.input(|i| i.modifiers);
         let delta = response.drag_delta();
         let d = DVec2::new(f64::from(delta.x), f64::from(delta.y));
         let secondary = response.dragged_by(egui::PointerButton::Secondary);
         let middle = response.dragged_by(egui::PointerButton::Middle);
         let alt_primary = response.dragged_by(egui::PointerButton::Primary) && modifiers.alt;
-        if (secondary && modifiers.shift) || middle || (alt_primary && modifiers.shift) {
+        let shift = modifiers.shift;
+        let (orbit, pan) = match self.mouse {
+            P::Default => (
+                (secondary || alt_primary) && !shift,
+                ((secondary || alt_primary) && shift) || middle,
+            ),
+            P::Blender => (
+                (middle && !shift) || secondary || (alt_primary && !shift),
+                (middle || alt_primary) && shift,
+            ),
+            P::Fusion => (
+                (middle && shift) || secondary || (alt_primary && !shift),
+                (middle && !shift) || (alt_primary && shift),
+            ),
+        };
+        if pan {
             self.camera.pan(d, size.y);
-        } else if secondary || alt_primary {
+        } else if orbit {
             self.camera.orbit(d);
         }
 
@@ -302,6 +320,12 @@ impl Viewport {
         {
             self.toggle_projection();
         }
+    }
+
+    /// A 256 px PNG thumbnail of the last rendered frame.
+    pub fn thumbnail_png(&self) -> Option<Vec<u8>> {
+        self.renderer
+            .thumbnail_png(&self.render_state.device, &self.render_state.queue, 256)
     }
 
     pub fn toggle_projection(&mut self) {

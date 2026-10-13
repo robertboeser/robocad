@@ -17,7 +17,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Print size, volume and printability information about an STL file.
+    /// Evaluate a robocad project (all booleans) and export the printable result as STL.
+    Export {
+        project: PathBuf,
+        output: PathBuf,
+        /// Write ASCII STL instead of binary.
+        #[arg(long)]
+        ascii: bool,
+    },
+    /// Print size, volume and printability information about an STL file or a project.
     Info { file: PathBuf },
     /// Repair an STL file: merge near vertices, remove bad triangles, separate touching parts,
     /// fix orientation and fill holes.
@@ -43,7 +51,13 @@ enum Command {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::Info { file } if is_project(&file) => project_info(&file),
         Command::Info { file } => info(&file),
+        Command::Export {
+            project,
+            output,
+            ascii,
+        } => export(&project, &output, ascii),
         Command::Convert {
             input,
             output,
@@ -170,6 +184,74 @@ fn repair(input: &Path, output: &Path, fill: bool, min_part_triangles: usize) ->
         output.display(),
         fixed.triangle_count(),
         if after.is_watertight() { "yes" } else { "no" }
+    );
+    Ok(())
+}
+
+fn is_project(p: &Path) -> bool {
+    p.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(rc_doc::project::EXTENSION))
+}
+
+fn load_project(path: &Path) -> Result<rc_doc::project::Project> {
+    rc_doc::project::load(path).with_context(|| format!("failed to open {}", path.display()))
+}
+
+fn project_info(path: &Path) -> Result<()> {
+    let p = load_project(path)?;
+    let doc = &p.document;
+    println!("project:     {}", path.display());
+    println!(
+        "objects:     {} ({} at top level)",
+        doc.nodes.len(),
+        doc.roots.len()
+    );
+    for (id, depth) in doc.walk() {
+        let Some(n) = doc.get(id) else { continue };
+        let kind = match &n.kind {
+            rc_doc::NodeKind::Imported { source, .. } => format!("mesh from {source}"),
+            rc_doc::NodeKind::Primitive(p) => p.kind().name().to_lowercase(),
+            rc_doc::NodeKind::Group { .. } => "group".into(),
+        };
+        let role = if n.role == rc_doc::Role::Hole {
+            ", hole"
+        } else {
+            ""
+        };
+        println!("  {}{} ({kind}{role})", "  ".repeat(depth), n.name);
+    }
+    let b = doc.scene_bounds();
+    let s = b.size();
+    println!("size:        {:.3} x {:.3} x {:.3} mm", s.x, s.y, s.z);
+    Ok(())
+}
+
+fn export(project: &Path, output: &Path, ascii: bool) -> Result<()> {
+    let p = load_project(project)?;
+    let roots = p.document.roots.clone();
+    let mut cache = rc_doc::eval::SolidCache::default();
+    let r = rc_doc::eval::export_mesh(&p.document, &roots, &mut cache);
+    for w in &r.warnings {
+        eprintln!("warning: {w}");
+    }
+    anyhow::ensure!(
+        !r.mesh.is_empty(),
+        "nothing to export: no visible solid objects"
+    );
+    let format = if ascii {
+        StlFormat::Ascii
+    } else {
+        StlFormat::Binary
+    };
+    stl::write_file(&r.mesh, output, format, "robocad")
+        .with_context(|| format!("failed to write {}", output.display()))?;
+    let watertight = topology::analyze(&r.mesh).is_watertight();
+    println!(
+        "wrote {} ({} triangles, {:.3} mm³) — watertight: {}",
+        output.display(),
+        r.mesh.triangle_count(),
+        r.mesh.volume(),
+        if watertight { "yes" } else { "no" }
     );
     Ok(())
 }

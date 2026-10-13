@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 rc-mesh.workspace = true
+rc-doc.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 
@@ -19,6 +20,7 @@ clap.workspace = true
 assert_cmd.workspace = true
 tempfile.workspace = true
 predicates = "3"
+rc-mesh.workspace = true
 
 [lints]
 workspace = true

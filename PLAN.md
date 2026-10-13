@@ -251,7 +251,7 @@ pub trait GeometryKernel: Send + Sync {
 
 - A ZIP container:
   - `document.json` — versioned schema (`"format_version": 1`), nodes, settings, camera.
-  - `meshes/<hash>.stl` — imported meshes in binary STL (deduplicated by content hash).
+  - `meshes/<hash>.bin` — imported meshes in a raw indexed format (*as built*: STL cannot store vertex sharing, so a round trip would re-weld deliberately separated touching parts and change content hashes; the raw format is exact).
   - `thumbnail.png` — 256×256 viewport render (for OS file previews later).
 - Writing is atomic (write temp file, then rename). Autosave to the OS data dir every 2 minutes when dirty; offer recovery on next start.
 - Migration functions for each `format_version` bump; never break old files.
@@ -384,7 +384,7 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - `robocad-cli repair <in> <out>`.
 - **Accept**: all broken fixtures are repaired to watertight where theoretically possible; repaired results are accepted by the kernel for booleans; repair of a 1 M-triangle mesh < 2 s.
 
-### M7 — Projects & settings
+### M7 — Projects & settings — ✅ DONE
 - `.rcad` save/load (§3.8), Save/Save As/Open/Recent files, dirty indicator in title, "unsaved changes" prompt on quit, autosave + crash recovery.
 - Settings stored in OS config dir (`directories` crate or eframe storage): theme, UI scale, build plate size, grid, default segment quality, mouse mapping preset (default / "Blender-like" / "Fusion-like").
 - `robocad-cli export <project.rcad> <out.stl>` evaluates headlessly.

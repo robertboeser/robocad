@@ -219,6 +219,11 @@ impl Editor {
         self.saved_revision = self.revision;
     }
 
+    /// Marks the document as saved at an earlier revision (for background saves).
+    pub fn mark_saved_at(&mut self, revision: u64) {
+        self.saved_revision = revision;
+    }
+
     /// Replaces the whole document (e.g. after loading a file) and clears history.
     pub fn replace_document(&mut self, doc: Document) {
         self.doc = doc;

@@ -9,5 +9,7 @@ mod renderer;
 mod style;
 
 pub use camera::{OrbitCamera, Projection, StandardView};
-pub use renderer::{DrawObject, DrawStyle, FrameDesc, MeshKey, Renderer, headless_device};
+pub use renderer::{
+    DrawObject, DrawStyle, FrameDesc, MeshKey, Renderer, encode_png, headless_device,
+};
 pub use style::{SceneStyle, srgb_to_linear};

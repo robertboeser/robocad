@@ -6,6 +6,7 @@ pub mod document;
 pub mod editor;
 pub mod eval;
 pub mod expr;
+pub mod project;
 pub mod transform;
 
 pub use document::{DocError, DocSettings, Document, GroupOp, Node, NodeId, NodeKind, Role};

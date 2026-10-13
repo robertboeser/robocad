@@ -12,16 +12,34 @@ fn fixture(name: &str) -> String {
     format!("{}/../../tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Builds the app in a harness, or `None` if no GPU adapter is available (headless CI).
-fn harness() -> Option<Harness<'static, RobocadApp>> {
+/// Temporary settings/data directories so tests never touch the user's real files.
+fn temp_dirs() -> (tempfile::TempDir, rc_app::settings::AppDirs) {
+    let t = tempfile::tempdir().unwrap();
+    let dirs = rc_app::settings::AppDirs {
+        config: t.path().join("config"),
+        data: t.path().join("data"),
+    };
+    (t, dirs)
+}
+
+/// Builds the app in a harness with the given directories, or `None` without a GPU.
+fn harness_with(dirs: rc_app::settings::AppDirs) -> Option<Harness<'static, RobocadApp>> {
     rc_render::headless_device()?;
     let mut h = Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
         .wgpu()
-        .build_eframe(|cc| RobocadApp::new(cc, Vec::new()));
+        .build_eframe(move |cc| RobocadApp::with_dirs(cc, Vec::new(), dirs));
     h.run_steps(2);
     assert!(h.state().has_viewport());
     Some(h)
+}
+
+/// Builds the app in a harness, or `None` if no GPU adapter is available (headless CI).
+fn harness() -> Option<Harness<'static, RobocadApp>> {
+    let (t, dirs) = temp_dirs();
+    // Keep the directory alive for the whole test process (tiny, cleaned by the OS).
+    std::mem::forget(t);
+    harness_with(dirs)
 }
 
 fn snapshot(h: &mut Harness<'_, RobocadApp>, name: &str) {
@@ -503,4 +521,111 @@ fn overhang_view_renders() {
     h.key_press_modifiers(Modifiers::SHIFT, Key::F);
     h.run_steps(3);
     snapshot(&mut h, "overhangs");
+}
+
+#[test]
+fn save_and_reopen_project() {
+    let (_t, dirs) = temp_dirs();
+    let Some(mut h) = harness_with(dirs.clone()) else {
+        return;
+    };
+    add_box(&mut h);
+    h.state_mut()
+        .import_blocking(fixture("bowtie_vertex.stl"))
+        .unwrap();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::G);
+    settle(&mut h);
+    let path = dirs.data.join("bracket.rcad");
+    std::fs::create_dir_all(&dirs.data).unwrap();
+    h.state_mut().save_blocking(&path).unwrap();
+    assert!(!h.state().editor.is_dirty());
+    let saved = h.state().editor.doc().clone();
+    h.run_steps(1);
+    assert!(
+        h.state()
+            .window_title_for_tests()
+            .starts_with("bracket.rcad")
+    );
+    assert!(
+        rc_doc::project::read_thumbnail(&path).is_some(),
+        "thumbnail stored"
+    );
+
+    let Some(mut h2) = harness_with(dirs.clone()) else {
+        return;
+    };
+    h2.state_mut().open_project_blocking(&path).unwrap();
+    h2.run_steps(2);
+    assert_eq!(h2.state().editor.doc(), &saved);
+    assert!(!h2.state().editor.is_dirty());
+    assert_eq!(h2.state().settings.recent_files.first(), Some(&path));
+}
+
+#[test]
+fn crash_recovery_restores_autosave() {
+    let (_t, dirs) = temp_dirs();
+    {
+        let Some(mut h) = harness_with(dirs.clone()) else {
+            return;
+        };
+        add_box(&mut h);
+        h.state_mut().autosave_now();
+        h.state_mut().wait_for_autosave();
+        assert!(dirs.autosave_file().exists());
+        // Dropping the harness without quitting simulates a crash.
+    }
+    let Some(mut h) = harness_with(dirs.clone()) else {
+        return;
+    };
+    assert!(h.state().recovery_offered());
+    h.run_steps(2);
+    snapshot(&mut h, "recovery");
+    h.get_by_label("Restore").click();
+    h.run_steps(3);
+    assert_eq!(roots(&h).len(), 1);
+    assert!(h.state().editor.is_dirty(), "recovered work is unsaved");
+    assert!(!h.state().recovery_offered());
+}
+
+#[test]
+fn new_project_asks_about_unsaved_changes() {
+    let Some(mut h) = harness() else { return };
+    add_box(&mut h);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::N);
+    h.run_steps(2);
+    snapshot(&mut h, "unsaved_prompt");
+    h.get_by_label("Cancel").click();
+    h.run_steps(2);
+    assert_eq!(roots(&h).len(), 1, "cancel keeps the document");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::N);
+    h.run_steps(2);
+    h.get_by_label("Don't save").click();
+    h.run_steps(2);
+    assert!(roots(&h).is_empty(), "new document");
+    assert!(!h.state().editor.is_dirty());
+}
+
+#[test]
+fn settings_persist_between_sessions() {
+    let (_t, dirs) = temp_dirs();
+    {
+        let Some(mut h) = harness_with(dirs.clone()) else {
+            return;
+        };
+        h.state_mut().place_on_plate = false;
+        h.state_mut().import_units = rc_app::app::ImportUnits::Inches;
+        h.state_mut().settings.grid_step = 0.5;
+        h.run_steps(2);
+    }
+    let Some(h) = harness_with(dirs.clone()) else {
+        return;
+    };
+    assert!(!h.state().place_on_plate);
+    assert_eq!(h.state().import_units, rc_app::app::ImportUnits::Inches);
+    assert_eq!(
+        h.state().editor.doc().settings.grid_step,
+        0.5,
+        "new projects use the setting"
+    );
 }

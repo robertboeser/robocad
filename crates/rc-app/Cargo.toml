@@ -23,6 +23,9 @@ log.workspace = true
 env_logger.workspace = true
 eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11", "persistence"] }
 rfd = "0.17"
+serde.workspace = true
+serde_json.workspace = true
+directories.workspace = true
 
 [lints]
 workspace = true

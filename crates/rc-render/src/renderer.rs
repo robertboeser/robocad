@@ -622,6 +622,42 @@ impl Renderer {
         Some((w, h, out))
     }
 
+    /// A square PNG thumbnail (centre crop, box-filtered to `size` pixels) of the last frame.
+    pub fn thumbnail_png(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: u32,
+    ) -> Option<Vec<u8>> {
+        let (w, h, px) = self.read_pixels(device, queue)?;
+        let side = w.min(h);
+        let (ox, oy) = ((w - side) / 2, (h - side) / 2);
+        let size = size.clamp(1, side);
+        let mut out = vec![0u8; (size * size * 4) as usize];
+        for ty in 0..size {
+            for tx in 0..size {
+                let (x0, x1) = (ox + tx * side / size, ox + (tx + 1) * side / size);
+                let (y0, y1) = (oy + ty * side / size, oy + (ty + 1) * side / size);
+                let mut acc = [0u32; 4];
+                let mut n = 0;
+                for y in y0..y1.max(y0 + 1) {
+                    for x in x0..x1.max(x0 + 1) {
+                        let i = ((y * w + x) * 4) as usize;
+                        for c in 0..4 {
+                            acc[c] += u32::from(px[i + c]);
+                        }
+                        n += 1;
+                    }
+                }
+                let o = ((ty * size + tx) * 4) as usize;
+                for c in 0..4 {
+                    out[o + c] = (acc[c] / n.max(1)) as u8;
+                }
+            }
+        }
+        encode_png(size, size, &out).ok()
+    }
+
     /// Writes the last rendered frame to a PNG file.
     pub fn save_png(
         &self,
@@ -642,6 +678,21 @@ impl Renderer {
             .map_err(std::io::Error::other)?;
         Ok(())
     }
+}
+
+/// Encodes tightly packed RGBA8 pixels as PNG.
+pub fn encode_png(w: u32, h: u32, rgba: &[u8]) -> std::io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().map_err(std::io::Error::other)?;
+        writer
+            .write_image_data(rgba)
+            .map_err(std::io::Error::other)?;
+    }
+    Ok(out)
 }
 
 fn globals_uniform(frame: &FrameDesc<'_>, aspect: f64, size: [u32; 2]) -> GlobalsUniform {

@@ -37,7 +37,7 @@ pub struct MeshExtras {
 }
 
 /// Units an imported STL is assumed to be in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ImportUnits {
     #[default]
     Millimetres,
@@ -107,6 +107,10 @@ pub struct RobocadApp {
     pub import_units: ImportUnits,
     pub place_on_plate: bool,
     pub show_overhangs: bool,
+    pub(crate) dirs: crate::settings::AppDirs,
+    pub settings: crate::settings::Settings,
+    pub(crate) settings_saved: crate::settings::Settings,
+    pub(crate) project: crate::project_ui::ProjectState,
     pub scene_ui: crate::scene_panel::SceneUiState,
     pub props_ui: crate::properties::PropsUiState,
     color_index: usize,
@@ -116,7 +120,17 @@ pub struct RobocadApp {
 
 impl RobocadApp {
     pub fn new(cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
-        cc.egui_ctx.set_theme(egui::ThemePreference::System);
+        Self::with_dirs(cc, files, crate::settings::AppDirs::system())
+    }
+
+    /// Creates the app with explicit settings/data directories (tests use temporary ones).
+    pub fn with_dirs(
+        cc: &eframe::CreationContext<'_>,
+        files: Vec<PathBuf>,
+        dirs: crate::settings::AppDirs,
+    ) -> Self {
+        let settings = crate::settings::Settings::load(&dirs.config);
+        let recovery = dirs.autosave_file().exists();
         let viewport = cc.wgpu_render_state.clone().map(Viewport::new);
         let mut app = Self {
             editor: Editor::default(),
@@ -143,14 +157,19 @@ impl RobocadApp {
             import_units: ImportUnits::default(),
             place_on_plate: true,
             show_overhangs: false,
+            settings_saved: settings.clone(),
+            settings,
+            dirs,
+            project: crate::project_ui::ProjectState::new(recovery),
             scene_ui: crate::scene_panel::SceneUiState::default(),
             props_ui: crate::properties::PropsUiState::default(),
             color_index: 0,
             title: String::new(),
             last_viewport_rect: None,
         };
+        app.apply_settings(&cc.egui_ctx);
         for f in files {
-            app.open(f, &cc.egui_ctx);
+            app.open_path(f, &cc.egui_ctx);
         }
         app
     }
@@ -174,21 +193,38 @@ impl RobocadApp {
         }
     }
 
-    fn open(&mut self, path: PathBuf, ctx: &egui::Context) {
+    /// Imports a mesh file in the background.
+    pub fn import_path(&mut self, path: PathBuf, ctx: &egui::Context) {
         let ctx = ctx.clone();
         self.loader.load(path, move || ctx.request_repaint());
     }
 
+    /// Open dialog for projects and STL files.
     pub(crate) fn open_dialog(&mut self, ctx: &egui::Context) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("robocad projects and STL files", &["rcad", "stl", "STL"])
+            .add_filter("All files", &["*"])
+            .pick_file()
+        {
+            self.open_path(path, ctx);
+        }
+    }
+
+    /// Import dialog for STL files (several at once).
+    pub(crate) fn import_dialog(&mut self, ctx: &egui::Context) {
         if let Some(paths) = rfd::FileDialog::new()
             .add_filter("STL files", &["stl", "STL"])
             .add_filter("All files", &["*"])
             .pick_files()
         {
             for p in paths {
-                self.open(p, ctx);
+                self.import_path(p, ctx);
             }
         }
+    }
+
+    pub(crate) fn register_analysis(&mut self, loaded: &LoadedMesh) {
+        self.register_loaded(loaded, Vec::new());
     }
 
     fn receive_loads(&mut self) {
@@ -509,6 +545,24 @@ impl RobocadApp {
         if pressed(KS::new(cmd, Key::O)) {
             self.open_dialog(ctx);
         }
+        if pressed(KS::new(cmd, Key::I)) {
+            self.import_dialog(ctx);
+        }
+        if pressed(KS::new(cmd_shift, Key::S)) {
+            self.save_as_dialog();
+        }
+        if pressed(KS::new(cmd, Key::S)) {
+            self.save();
+        }
+        if pressed(KS::new(cmd, Key::N)) {
+            self.request(crate::project_ui::AfterPrompt::New, ctx);
+        }
+        if pressed(KS::new(cmd, Key::Q)) {
+            self.request(crate::project_ui::AfterPrompt::Quit, ctx);
+        }
+        if pressed(KS::new(cmd, Key::Comma)) {
+            self.project.show_preferences = true;
+        }
         if text_focus {
             return;
         }
@@ -594,16 +648,36 @@ impl RobocadApp {
                 .collect()
         });
         for p in dropped {
-            self.open(p, ctx);
+            self.open_path(p, ctx);
         }
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("Import STL…  ⌘O").clicked() {
+                let ctx = ui.ctx().clone();
+                if ui.button("New  ⌘N").clicked() {
                     ui.close();
-                    self.open_dialog(ui.ctx());
+                    self.request(crate::project_ui::AfterPrompt::New, &ctx);
+                }
+                if ui.button("Open…  ⌘O").clicked() {
+                    ui.close();
+                    self.open_dialog(&ctx);
+                }
+                self.recent_menu(ui);
+                ui.separator();
+                if ui.button("Save  ⌘S").clicked() {
+                    ui.close();
+                    self.save();
+                }
+                if ui.button("Save as…  ⇧⌘S").clicked() {
+                    ui.close();
+                    self.save_as_dialog();
+                }
+                ui.separator();
+                if ui.button("Import STL…  ⌘I").clicked() {
+                    ui.close();
+                    self.import_dialog(&ctx);
                 }
                 ui.menu_button("Import options", |ui| {
                     ui.label("Units of imported STL files");
@@ -613,7 +687,6 @@ impl RobocadApp {
                     ui.separator();
                     ui.checkbox(&mut self.place_on_plate, "Place on the plate after import");
                 });
-                ui.separator();
                 if ui.button("Export STL…").clicked() {
                     ui.close();
                     self.export_dialog(false);
@@ -629,8 +702,14 @@ impl RobocadApp {
                     self.export_dialog(true);
                 }
                 ui.separator();
-                if ui.button("Quit").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                if ui.button("Preferences…  ⌘,").clicked() {
+                    ui.close();
+                    self.project.show_preferences = true;
+                }
+                ui.separator();
+                if ui.button("Quit  ⌘Q").clicked() {
+                    ui.close();
+                    self.request(crate::project_ui::AfterPrompt::Quit, &ctx);
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -792,6 +871,7 @@ impl eframe::App for RobocadApp {
         self.receive_evaluations();
         self.receive_exports();
         self.receive_repairs();
+        self.receive_project_io();
         self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
         // A continuous edit ends when no widget is being dragged or edited.
@@ -811,10 +891,13 @@ impl eframe::App for RobocadApp {
             .default_size(270.0)
             .show(ui, |ui| crate::properties::show(self, ui));
         self.messages_window(&ctx);
+        self.project_dialogs(&ctx);
+        self.maybe_autosave();
+        self.persist_settings();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| self.viewport_ui(ui));
-        let title = format!("robocad{}", if self.editor.is_dirty() { " •" } else { "" });
+        let title = self.window_title();
         if title != self.title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;

@@ -87,3 +87,24 @@ fn repair_fills_hole() {
         .success()
         .stdout(predicates::str::contains("watertight:  yes"));
 }
+
+#[test]
+fn project_info_and_export() {
+    let project = format!(
+        "{}/../../tests/fixtures/projects/v1_bracket.rcad",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    cli()
+        .args(["info", &project])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Bracket (group)"));
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bracket.stl");
+    cli()
+        .args(["export", &project, out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("watertight: yes"));
+    assert!(rc_mesh::stl::read_file(&out).unwrap().mesh.triangle_count() > 0);
+}
