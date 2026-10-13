@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use glam::{DMat4, DVec3};
+use rc_kernel::Primitive;
 use rc_mesh::{Aabb, Mesh};
 use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
@@ -41,6 +42,8 @@ pub enum NodeKind {
         mesh: u64,
         source: String,
     },
+    /// A parametric primitive (box, cylinder, …).
+    Primitive(Primitive),
     Group {
         children: Vec<NodeId>,
         op: GroupOp,
@@ -81,7 +84,7 @@ impl Node {
     pub fn children(&self) -> &[NodeId] {
         match &self.kind {
             NodeKind::Group { children, .. } => children,
-            NodeKind::Imported { .. } => &[],
+            NodeKind::Imported { .. } | NodeKind::Primitive(_) => &[],
         }
     }
 }
@@ -171,7 +174,7 @@ impl Document {
             .values()
             .filter_map(|n| match n.kind {
                 NodeKind::Imported { mesh, .. } => Some(mesh),
-                NodeKind::Group { .. } => None,
+                NodeKind::Group { .. } | NodeKind::Primitive(_) => None,
             })
             .collect();
         if self.meshes.keys().any(|k| !used.contains(k)) {
@@ -206,7 +209,7 @@ impl Document {
             None => Ok(&mut self.roots),
             Some(p) => match &mut self.nodes.get_mut(p).ok_or(DocError::NotFound)?.kind {
                 NodeKind::Group { children, .. } => Ok(children),
-                NodeKind::Imported { .. } => Err(DocError::NotAGroup),
+                NodeKind::Imported { .. } | NodeKind::Primitive(_) => Err(DocError::NotAGroup),
             },
         }
     }
@@ -366,6 +369,13 @@ impl Document {
             Some(NodeKind::Imported { mesh, .. }) => {
                 self.mesh(*mesh).map_or(Aabb::EMPTY, |m| m.aabb())
             }
+            Some(NodeKind::Primitive(p)) => {
+                let s = p.size().as_vec3();
+                Aabb::new(
+                    glam::Vec3::new(-s.x * 0.5, -s.y * 0.5, 0.0),
+                    glam::Vec3::new(s.x * 0.5, s.y * 0.5, s.z),
+                )
+            }
             _ => Aabb::EMPTY,
         }
     }
@@ -402,6 +412,41 @@ impl Document {
         let node = self.nodes.get_mut(id).ok_or(DocError::NotFound)?;
         node.transform.translation += local_delta;
         Ok(())
+    }
+
+    /// Bounds of several nodes together.
+    pub fn bounds_of(&self, ids: &[NodeId]) -> Aabb {
+        ids.iter()
+            .fold(Aabb::EMPTY, |b, id| b.union(&self.world_bounds(*id)))
+    }
+
+    /// Finds a spot on the plate (z = 0) near the origin where a footprint of `size` (x, y)
+    /// does not overlap any visible root object. Candidates lie on a grid, nearest first.
+    pub fn free_position(&self, size: DVec3) -> DVec3 {
+        let occupied: Vec<Aabb> = self
+            .roots
+            .iter()
+            .filter(|r| self.is_effectively_visible(**r))
+            .map(|r| self.world_bounds(*r))
+            .filter(|b| !b.is_empty())
+            .collect();
+        let step = ((size.x.max(size.y) + 5.0) / 5.0).ceil() * 5.0;
+        let mut candidates: Vec<(i32, i32)> = (-8..=8)
+            .flat_map(|i| (-8..=8).map(move |j| (i, j)))
+            .collect();
+        candidates.sort_by_key(|(i, j)| (i * i + j * j, *j, *i));
+        let half = glam::Vec2::new(size.x as f32, size.y as f32) * 0.5;
+        for (i, j) in candidates {
+            let c = glam::Vec2::new(i as f32, j as f32) * step as f32;
+            let (lo, hi) = (c - half, c + half);
+            let free = occupied
+                .iter()
+                .all(|b| hi.x <= b.min.x || lo.x >= b.max.x || hi.y <= b.min.y || lo.y >= b.max.y);
+            if free {
+                return DVec3::new(f64::from(c.x), f64::from(c.y), 0.0);
+            }
+        }
+        DVec3::ZERO
     }
 
     /// Generates a name not used by any node, e.g. "Box 3".

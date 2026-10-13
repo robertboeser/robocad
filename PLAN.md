@@ -171,13 +171,15 @@ pub enum NodeKind {
     Mirror { child: NodeId, plane: Axis },            // M8
     Array { child: NodeId, kind: ArrayKind },          // M8: linear / circular
 }
+// As built (rc-kernel): every primitive is described by its bounding-box size plus shape
+// parameters, so the "Size" field edits the true geometry and tessellation stays adaptive.
 pub enum Primitive {
     Box { size: DVec3 },
-    Cylinder { radius_bottom: f64, radius_top: f64, height: f64, segments: u32 }, // cone = different radii
-    Sphere { radius: f64, segments: u32 },
-    Torus { major: f64, minor: f64, segments: u32 },
+    Cylinder { size: DVec3, top: f64 /* top radius ratio, 0 = cone */, segments: Option<u32> },
+    Sphere { size: DVec3, segments: Option<u32> },           // ellipsoid filling the box
+    Torus { size: DVec3, tube: f64, segments: Option<u32> },
     Wedge { size: DVec3 },
-    Text { text: String, size: f64, depth: f64, font: FontRef },  // M8
+    // Text { text, size, depth, font }                       // M8
 }
 ```
 
@@ -216,7 +218,7 @@ pub trait GeometryKernel: Send + Sync {
 ```
 
 - **Backend 1 (default): Manifold.** Robust, fast, guaranteed manifold output. Keep native solids cached inside the evaluator (avoid mesh↔solid round-trips between nested groups).
-- Primitive tessellation is our own code in `rc-kernel` (deterministic, testable), with `segments` defaulting to an adaptive value from size (chord error ≤ 0.05 mm, clamped 16..256).
+- Primitive tessellation is our own code in `rc-kernel` (deterministic, testable), with `segments` defaulting to an adaptive value from size (chord error ≤ 0.025 mm, clamped 16..256; 0.05 mm left default spheres 1.6 % under volume).
 - Imported meshes that fail `from_mesh` (not manifold even after auto-repair) can be **displayed, measured and exported**, but participating in a boolean shows a clear error on the group: *"'bracket.stl' is not watertight (12 open edges). Run Repair or exclude it."*
 
 ### 3.5 Rendering (rc-render)
@@ -361,10 +363,10 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - Properties panel with numeric transform fields (incl. expression parser), color picker.
 - **Accept**: import 3 STLs, rename, move numerically, delete, undo/redo every step correctly (unit tests drive `Command`s headlessly); selection works in viewport and tree in both directions.
 
-### M4 — Primitives & direct manipulation
+### M4 — Primitives & direct manipulation — ✅ DONE
 - Primitive tessellation for Box, Cylinder/Cone, Sphere (UV with poles welded; or icosphere — pick one that is watertight and has an adaptive segment count), Torus, Wedge. All watertight, outward-oriented (tests!).
 - Toolbar buttons and shortcut to add primitives; new objects appear at the plate center (or under the cursor when dragged from the toolbar onto the plate).
-- Transform gizmo (move/rotate/scale, local/world toggle) with snapping; "Size" editing with bbox semantics; Drop to plate; Align; Duplicate; Nudge.
+- Transform gizmo (move/rotate/scale; *as built*: move/rotate in world axes, scale in the object's local axes about its origin; own implementation in `rc-app/src/gizmo.rs` because the external crate does not fit the reverse-Z offscreen viewport) with snapping; "Size" editing with bbox semantics; Drop to plate; Align; Duplicate; Nudge.
 - **Accept**: every primitive passes `is_watertight` and volume tests (e.g. sphere volume within 1 % of 4/3·π·r³ at default segments); a user can build a "box with a hole marker" layout purely with mouse + keyboard; gizmo drags are a single undo step.
 
 ### M5 — Booleans (Solid/Hole/Group) & export

@@ -3118,6 +3118,7 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "proptest",
+ "rc-kernel",
  "rc-mesh",
  "serde",
  "slotmap",
@@ -3127,6 +3128,13 @@ dependencies = [
 [[package]]
 name = "rc-kernel"
 version = "0.1.0"
+dependencies = [
+ "glam",
+ "proptest",
+ "rc-mesh",
+ "serde",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "rc-mesh"

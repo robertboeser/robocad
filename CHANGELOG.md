@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### M4 — Primitives & direct manipulation
+- `rc-kernel`: parametric box, cylinder/cone (top ratio), ellipsoid, torus and wedge with adaptive tessellation (0.025 mm chord tolerance); all watertight (property-tested).
+- Document: primitive nodes, set-primitive, drop-to-plate, align and free-spot placement.
+- Toolbar: click a shape to add it at the nearest free spot, or drag it onto the plate; move/rotate/scale tools; snapping toggle and grid step; drop, center, solid/hole.
+- Own transform gizmo: move arrows and planes, rotation rings (15° snap), scale handles (1 mm size snap), Alt inverts snapping, Esc cancels, one undo step per drag.
+- Drag objects directly to slide them over the plate; arrow keys nudge relative to the view (Shift = 10×), PgUp/PgDn move in Z.
+- Properties: size edits primitive parameters, shape section (top size, tube width, segments), align buttons for multi-selection.
+
 ### M3 — Document, selection, properties, undo
 - `rc-doc`: document tree (slotmap IDs, groups, solid/hole roles, content-addressed mesh store), transforms with Euler degrees, world matrices and bounds.
 - Command-based editing with snapshot undo/redo (200 steps), merging of continuous edits, selection handling, typed-arithmetic expression parser.

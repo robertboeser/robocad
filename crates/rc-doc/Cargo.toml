@@ -8,6 +8,7 @@ description = "Document model, commands and undo/redo for robocad"
 
 [dependencies]
 rc-mesh.workspace = true
+rc-kernel.workspace = true
 glam.workspace = true
 slotmap.workspace = true
 serde.workspace = true

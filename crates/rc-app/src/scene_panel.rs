@@ -151,7 +151,7 @@ fn row_contents(
     let role_icon = match (node.role, &node.kind) {
         (Role::Hole, _) => "◻",
         (Role::Solid, NodeKind::Group { .. }) => "▣",
-        (Role::Solid, NodeKind::Imported { .. }) => "■",
+        (Role::Solid, NodeKind::Imported { .. } | NodeKind::Primitive(_)) => "■",
     };
     let [r, g, b] = node.color;
     let icon_color = if node.role == Role::Hole {
@@ -186,7 +186,7 @@ fn row_contents(
             .extras
             .get(&mesh)
             .is_some_and(|e| !e.topology.is_watertight()),
-        NodeKind::Group { .. } => false,
+        NodeKind::Group { .. } | NodeKind::Primitive(_) => false,
     };
     if warn {
         label = RichText::new(format!("{} ⚠", node.name));

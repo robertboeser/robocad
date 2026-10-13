@@ -24,3 +24,12 @@ Run before tagging a release. Use a release build: `cargo run --release -p rc-ap
 - [ ] Scene tree: double-click renames, eye hides, lock prevents moving and selecting in the viewport.
 - [ ] Drag a tree row onto a group (moves inside) and between rows (reorders).
 - [ ] Window title shows • after changes.
+
+## Primitives & manipulation (M4)
+- [ ] Each toolbar shape adds a new object at a free spot; dragging a shape onto the plate places it under the cursor.
+- [ ] W/E/R switch tools; arrows, planes, rings and scale handles highlight on hover and drag smoothly.
+- [ ] Snapping: 1 mm moves, 15° rotations, 1 mm sizes; holding Alt drags freely.
+- [ ] Esc during a drag restores the original placement.
+- [ ] Dragging an object (not the gizmo) slides it on the plate.
+- [ ] Arrow keys nudge relative to the view; Shift = 10 mm; PgUp/PgDn change height.
+- [ ] D drops to the plate; Align buttons line up a multi-selection.

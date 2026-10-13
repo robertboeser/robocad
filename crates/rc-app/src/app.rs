@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Pos2, Rect};
 use glam::DVec2;
-use rc_doc::{Command, Editor, NodeId, Role};
-use rc_mesh::{Bvh, MeshInfo, Ray, TopologyReport};
-use rc_render::{DrawObject, DrawStyle, SceneStyle, StandardView, srgb_to_linear};
+use rc_doc::{Command, Editor, NodeId};
+use rc_mesh::{Bvh, MeshInfo, TopologyReport};
+use rc_render::StandardView;
 
 use crate::loader::{LoadedMesh, Loader};
 use crate::viewport::Viewport;
@@ -37,19 +37,25 @@ pub struct MeshExtras {
 pub struct RobocadApp {
     pub editor: Editor,
     pub extras: HashMap<u64, MeshExtras>,
-    viewport: Option<Viewport>,
+    pub(crate) viewport: Option<Viewport>,
     loader: Loader,
-    messages: Vec<String>,
+    pub(crate) messages: Vec<String>,
     last_load_ms: Option<f64>,
-    show_edges: bool,
-    hovered: Option<NodeId>,
+    pub(crate) show_edges: bool,
+    pub(crate) hovered: Option<NodeId>,
     /// Viewport-local start of a box selection drag.
-    box_start: Option<Pos2>,
+    pub(crate) box_start: Option<Pos2>,
+    pub(crate) gizmo: crate::gizmo::Gizmo,
+    /// Whether the current gizmo drag changed anything (for Esc = cancel).
+    pub(crate) gizmo_changed: bool,
+    pub snapping: bool,
+    /// Meshes generated for primitives, keyed by display key.
+    pub(crate) prim_meshes: HashMap<u64, Arc<rc_mesh::Mesh>>,
     pub scene_ui: crate::scene_panel::SceneUiState,
     pub props_ui: crate::properties::PropsUiState,
     color_index: usize,
     title: String,
-    last_viewport_rect: Option<Rect>,
+    pub(crate) last_viewport_rect: Option<Rect>,
 }
 
 impl RobocadApp {
@@ -66,6 +72,10 @@ impl RobocadApp {
             show_edges: true,
             hovered: None,
             box_start: None,
+            gizmo: crate::gizmo::Gizmo::default(),
+            gizmo_changed: false,
+            snapping: true,
+            prim_meshes: HashMap::new(),
             scene_ui: crate::scene_panel::SceneUiState::default(),
             props_ui: crate::properties::PropsUiState::default(),
             color_index: 0,
@@ -102,7 +112,7 @@ impl RobocadApp {
         self.loader.load(path, move || ctx.request_repaint());
     }
 
-    fn open_dialog(&mut self, ctx: &egui::Context) {
+    pub(crate) fn open_dialog(&mut self, ctx: &egui::Context) {
         if let Some(paths) = rfd::FileDialog::new()
             .add_filter("STL files", &["stl", "STL"])
             .add_filter("All files", &["*"])
@@ -187,14 +197,14 @@ impl RobocadApp {
         self.frame_all();
     }
 
-    fn frame_all(&mut self) {
+    pub(crate) fn frame_all(&mut self) {
         let b = self.editor.doc().scene_bounds();
         if let Some(vp) = self.viewport.as_mut() {
             vp.camera.frame(&b, 1.6);
         }
     }
 
-    fn frame_selection(&mut self) {
+    pub(crate) fn frame_selection(&mut self) {
         let doc = self.editor.doc();
         let b = self
             .editor
@@ -253,7 +263,7 @@ impl RobocadApp {
         }
     }
 
-    fn select_all(&mut self) {
+    pub(crate) fn select_all(&mut self) {
         let roots = self.editor.doc().roots.clone();
         self.editor.selection.set(roots);
     }
@@ -294,8 +304,25 @@ impl RobocadApp {
             self.delete_selection();
         }
         if plain(Key::Escape) {
-            self.editor.selection.clear();
+            if self.gizmo.is_dragging() {
+                self.cancel_gizmo_drag();
+            } else {
+                self.editor.selection.clear();
+            }
         }
+        if plain(Key::W) {
+            self.gizmo.mode = crate::gizmo::GizmoMode::Move;
+        }
+        if plain(Key::E) {
+            self.gizmo.mode = crate::gizmo::GizmoMode::Rotate;
+        }
+        if plain(Key::R) {
+            self.gizmo.mode = crate::gizmo::GizmoMode::Scale;
+        }
+        if plain(Key::D) {
+            self.drop_selection_to_plate();
+        }
+        self.handle_nudge(ctx);
         if plain(Key::H) {
             self.toggle_hole_selection();
         }
@@ -444,10 +471,15 @@ impl RobocadApp {
                 .nodes
                 .values()
                 .filter_map(|n| match n.kind {
-                    rc_doc::NodeKind::Imported { mesh, .. } => doc.mesh(mesh),
+                    rc_doc::NodeKind::Imported { mesh, .. } => {
+                        doc.mesh(mesh).map(|m| m.triangle_count())
+                    }
+                    rc_doc::NodeKind::Primitive(p) => self
+                        .prim_meshes
+                        .get(&crate::interaction::prim_key(&p))
+                        .map(|m| m.triangle_count()),
                     rc_doc::NodeKind::Group { .. } => None,
                 })
-                .map(|m| m.triangle_count())
                 .sum::<usize>();
             ui.label(format!("{} objects · {tris} triangles", doc.nodes.len()));
             let sel = self.editor.selection.ids();
@@ -483,186 +515,6 @@ impl RobocadApp {
         });
     }
 
-    /// The root-level ancestor of a node (what a viewport click selects).
-    fn root_of(&self, id: NodeId) -> NodeId {
-        let doc = self.editor.doc();
-        let mut cur = id;
-        while let Some(p) = doc.get(cur).and_then(|n| n.parent) {
-            cur = p;
-        }
-        cur
-    }
-
-    /// Visible, unlocked leaf under a viewport pixel and the hit distance.
-    fn pick(&self, pixel: DVec2, size: DVec2) -> Option<NodeId> {
-        let vp = self.viewport.as_ref()?;
-        let (origin, dir) = vp.camera.ray(pixel, size);
-        let doc = self.editor.doc();
-        let mut best: Option<(f64, NodeId)> = None;
-        for (id, node) in &doc.nodes {
-            let rc_doc::NodeKind::Imported { mesh, .. } = node.kind else {
-                continue;
-            };
-            if !doc.is_effectively_visible(id) || doc.is_effectively_locked(id) {
-                continue;
-            }
-            let (Some(m), Some(extra)) = (doc.mesh(mesh), self.extras.get(&mesh)) else {
-                continue;
-            };
-            let world = doc.world_matrix(id);
-            let inv = world.inverse();
-            let lo = inv.transform_point3(origin);
-            let ld = inv.transform_vector3(dir);
-            let ray = Ray::new(lo.as_vec3(), ld.as_vec3());
-            if let Some(hit) = extra.bvh.raycast(m, &ray, f32::INFINITY) {
-                let wp = world.transform_point3(hit.point.as_dvec3());
-                let dist = (wp - origin).dot(dir);
-                if best.is_none_or(|(d, _)| dist < d) {
-                    best = Some((dist, id));
-                }
-            }
-        }
-        best.map(|(_, id)| id)
-    }
-
-    /// Root nodes whose projected bounds lie inside a viewport rectangle.
-    fn box_select(&self, rect: Rect, size: DVec2) -> Vec<NodeId> {
-        let Some(vp) = self.viewport.as_ref() else {
-            return Vec::new();
-        };
-        let doc = self.editor.doc();
-        doc.roots
-            .iter()
-            .copied()
-            .filter(|id| doc.is_effectively_visible(*id) && !doc.is_effectively_locked(*id))
-            .filter(|id| {
-                let b = doc.world_bounds(*id);
-                !b.is_empty()
-                    && b.corners().iter().all(|c| {
-                        vp.camera
-                            .project(c.as_dvec3(), size)
-                            .is_some_and(|p| rect.contains(Pos2::new(p.x as f32, p.y as f32)))
-                    })
-            })
-            .collect()
-    }
-
-    fn draw_objects(&self) -> Vec<DrawObject> {
-        let doc = self.editor.doc();
-        let sel = &self.editor.selection;
-        let in_set = |id: NodeId, f: &dyn Fn(NodeId) -> bool| {
-            let mut cur = Some(id);
-            while let Some(c) = cur {
-                if f(c) {
-                    return true;
-                }
-                cur = doc.get(c).and_then(|n| n.parent);
-            }
-            false
-        };
-        doc.nodes
-            .iter()
-            .filter_map(|(id, node)| {
-                let rc_doc::NodeKind::Imported { mesh, .. } = node.kind else {
-                    return None;
-                };
-                if !doc.is_effectively_visible(id) {
-                    return None;
-                }
-                let hole = in_set(id, &|c| doc.get(c).is_some_and(|n| n.role == Role::Hole));
-                let (color, style) = if hole {
-                    ([0.35, 0.37, 0.40, 0.35], DrawStyle::Hole)
-                } else {
-                    let c = node.color.map(|v| srgb_to_linear(f32::from(v) / 255.0));
-                    ([c[0], c[1], c[2], 1.0], DrawStyle::Solid)
-                };
-                Some(DrawObject {
-                    mesh,
-                    model: doc.world_matrix(id),
-                    color,
-                    style,
-                    selected: in_set(id, &|c| sel.contains(c)),
-                    hovered: self.hovered.is_some_and(|h| in_set(id, &|c| c == h)),
-                })
-            })
-            .collect()
-    }
-
-    fn viewport_ui(&mut self, ui: &mut egui::Ui) {
-        let objects = self.draw_objects();
-        let mut style = if ui.visuals().dark_mode {
-            SceneStyle::dark()
-        } else {
-            SceneStyle::light()
-        };
-        style.show_edges = self.show_edges;
-        let plate = self.editor.doc().settings.plate_size;
-        style.plate_size = [plate[0] as f32, plate[1] as f32];
-        let Some(vp) = self.viewport.as_mut() else {
-            ui.centered_and_justified(|ui| {
-                ui.label("No GPU renderer available (wgpu failed to initialise).");
-            });
-            return;
-        };
-        let out = vp.ui(ui, &objects, &style);
-        self.last_viewport_rect = Some(out.rect);
-        let origin = out.rect.min;
-        let (shift, command) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
-
-        self.hovered = out
-            .hover
-            .and_then(|p| self.pick(p, out.viewport_size))
-            .map(|id| self.root_of(id));
-
-        // Box selection with the primary button on empty space.
-        if out.drag_started_primary && !ui.input(|i| i.modifiers.alt) {
-            let start = out.press_origin.unwrap_or_default();
-            if self.pick(start, out.viewport_size).is_none() {
-                self.box_start = Some(Pos2::new(start.x as f32, start.y as f32));
-            }
-        }
-        if let Some(start) = self.box_start {
-            if let Some(cur) = out.hover.or(out.pointer_local) {
-                let r = Rect::from_two_pos(start, Pos2::new(cur.x as f32, cur.y as f32));
-                let screen = r.translate(origin.to_vec2());
-                let painter = ui.painter();
-                let accent = ui.visuals().selection.bg_fill;
-                painter.rect_filled(screen, 0.0, accent.gamma_multiply(0.15));
-                painter.rect_stroke(
-                    screen,
-                    0.0,
-                    egui::Stroke::new(1.0, accent),
-                    egui::StrokeKind::Inside,
-                );
-                if out.drag_stopped_primary {
-                    let picked = self.box_select(r, out.viewport_size);
-                    if !(shift || command) {
-                        self.editor.selection.clear();
-                    }
-                    for id in picked {
-                        self.editor.selection.add(id);
-                    }
-                    self.box_start = None;
-                }
-            }
-            if !ui.input(|i| i.pointer.primary_down()) {
-                self.box_start = None;
-            }
-        }
-
-        if let Some(click) = out.clicked {
-            let hit = self
-                .pick(click, out.viewport_size)
-                .map(|id| self.root_of(id));
-            match hit {
-                Some(id) if shift || command => self.editor.selection.toggle(id),
-                Some(id) => self.editor.selection.set([id]),
-                None if !(shift || command) => self.editor.selection.clear(),
-                None => {}
-            }
-        }
-    }
-
     fn messages_window(&mut self, ctx: &egui::Context) {
         if self.messages.is_empty() {
             return;
@@ -695,6 +547,7 @@ impl eframe::App for RobocadApp {
         }
 
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::left("scene")
             .resizable(true)

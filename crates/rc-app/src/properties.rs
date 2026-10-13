@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, RichText};
 use glam::DVec3;
-use rc_doc::{Command, GroupOp, NodeId, NodeKind, Role, Transform, expr};
+use rc_doc::{AlignMode, Command, GroupOp, NodeId, NodeKind, Primitive, Role, Transform, expr};
 
 use crate::app::RobocadApp;
 
@@ -156,8 +156,17 @@ fn single(app: &mut RobocadApp, ui: &mut egui::Ui, id: NodeId) {
                 let base = base_size(app, id, &node);
                 let size = base * t.scale.abs();
                 if let Some((v, key)) = vec3_row(ui, "Size mm", size, 0.1, "") {
-                    let nt = resize(t, base, size, v, app.props_ui.lock_aspect);
-                    commands.push((Command::SetTransforms(vec![(id, nt)]), Some(key)));
+                    let lock = app.props_ui.lock_aspect;
+                    if let NodeKind::Primitive(p) = node.kind {
+                        let new_size = proportional(size, v, lock) / t.scale.abs();
+                        commands.push((
+                            Command::SetPrimitives(vec![(id, p.with_size(new_size))]),
+                            Some(key),
+                        ));
+                    } else {
+                        let nt = resize(t, base, size, v, lock);
+                        commands.push((Command::SetTransforms(vec![(id, nt)]), Some(key)));
+                    }
                 }
                 ui.label("");
                 ui.checkbox(&mut app.props_ui.lock_aspect, "Keep proportions");
@@ -190,6 +199,18 @@ fn single(app: &mut RobocadApp, ui: &mut egui::Ui, id: NodeId) {
         }
     });
 
+    ui.horizontal(|ui| {
+        if ui.button("Drop to plate").on_hover_text("D").clicked() {
+            commands.push((Command::DropToPlate(vec![id]), None));
+        }
+        if ui.button("Center on plate").clicked() {
+            app.center_selection_on_plate();
+        }
+    });
+
+    if let NodeKind::Primitive(p) = node.kind {
+        shape_section(ui, id, p, &mut commands);
+    }
     if let NodeKind::Imported { mesh, ref source } = node.kind {
         mesh_info(app, ui, mesh, source);
     }
@@ -206,11 +227,96 @@ fn single(app: &mut RobocadApp, ui: &mut egui::Ui, id: NodeId) {
 fn base_size(app: &RobocadApp, id: NodeId, node: &rc_doc::Node) -> DVec3 {
     let doc = app.editor.doc();
     match node.kind {
-        NodeKind::Imported { .. } => doc.local_bounds(id).size().as_dvec3(),
+        NodeKind::Imported { .. } | NodeKind::Primitive(_) => {
+            doc.local_bounds(id).size().as_dvec3()
+        }
         NodeKind::Group { .. } => {
             doc.world_bounds(id).size().as_dvec3()
                 / node.transform.scale.abs().max(DVec3::splat(1e-9))
         }
+    }
+}
+
+/// Applies "keep proportions": scales all axes by the factor of the edited one.
+fn proportional(old: DVec3, new: DVec3, lock: bool) -> DVec3 {
+    if !lock {
+        return new;
+    }
+    match (0..3).find(|&i| (new[i] - old[i]).abs() > 1e-12) {
+        Some(i) if old[i] > 1e-12 => old * (new[i] / old[i]),
+        _ => new,
+    }
+}
+
+/// Shape parameters of a primitive.
+fn shape_section(
+    ui: &mut egui::Ui,
+    id: NodeId,
+    p: Primitive,
+    commands: &mut Vec<(Command, Option<u64>)>,
+) {
+    if matches!(p, Primitive::Box { .. } | Primitive::Wedge { .. }) {
+        return;
+    }
+    ui.add_space(6.0);
+    ui.label(RichText::new("Shape").strong());
+    let mut new = p;
+    let mut key = None;
+    egui::Grid::new("props_shape")
+        .num_columns(2)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| {
+            match &mut new {
+                Primitive::Cylinder { top, .. } => {
+                    ui.label("Top size");
+                    let mut pct = *top * 100.0;
+                    let r = ui.add(number(&mut pct, 1.0, " %").range(0.0..=500.0));
+                    if r.changed() {
+                        *top = pct / 100.0;
+                        key = Some(r.id.value());
+                    }
+                    ui.end_row();
+                }
+                Primitive::Torus { tube, .. } => {
+                    ui.label("Tube width");
+                    let r = ui.add(number(tube, 0.1, " mm").range(0.01..=10_000.0));
+                    if r.changed() {
+                        key = Some(r.id.value());
+                    }
+                    ui.end_row();
+                }
+                Primitive::Box { .. } | Primitive::Sphere { .. } | Primitive::Wedge { .. } => {}
+            }
+            let segments = match &mut new {
+                Primitive::Cylinder { segments, .. }
+                | Primitive::Sphere { segments, .. }
+                | Primitive::Torus { segments, .. } => Some(segments),
+                Primitive::Box { .. } | Primitive::Wedge { .. } => None,
+            };
+            if let Some(segments) = segments {
+                ui.label("Segments");
+                ui.horizontal(|ui| {
+                    let mut auto = segments.is_none();
+                    if ui
+                        .checkbox(&mut auto, "Auto")
+                        .on_hover_text("Smooth enough for printing (0.025 mm deviation)")
+                        .changed()
+                    {
+                        *segments = if auto { None } else { Some(64) };
+                        key = Some(ui.id().with("seg_auto").value());
+                    }
+                    if let Some(n) = segments.as_mut() {
+                        let r = ui.add(egui::DragValue::new(n).range(3..=512));
+                        if r.changed() {
+                            key = Some(r.id.value());
+                        }
+                    }
+                });
+                ui.end_row();
+            }
+        });
+    if new != p {
+        commands.push((Command::SetPrimitives(vec![(id, new)]), key));
     }
 }
 
@@ -305,6 +411,31 @@ fn multi(app: &mut RobocadApp, ui: &mut egui::Ui, sel: &[NodeId], n: usize) {
     if ui.button("Group (⌘G)").clicked() {
         app.group_selection();
     }
+    ui.add_space(6.0);
+    ui.label(RichText::new("Align").strong());
+    egui::Grid::new("align").num_columns(4).show(ui, |ui| {
+        for (axis, name) in ["X", "Y", "Z"].iter().enumerate() {
+            ui.label(*name);
+            for (mode, label) in [
+                (AlignMode::Min, "Min"),
+                (AlignMode::Center, "Center"),
+                (AlignMode::Max, "Max"),
+            ] {
+                if ui.button(label).clicked() {
+                    app.align_selection(axis, mode);
+                }
+            }
+            ui.end_row();
+        }
+    });
+    ui.horizontal(|ui| {
+        if ui.button("Drop to plate").clicked() {
+            app.drop_selection_to_plate();
+        }
+        if ui.button("Center on plate").clicked() {
+            app.center_selection_on_plate();
+        }
+    });
 }
 
 fn settings(app: &mut RobocadApp, ui: &mut egui::Ui) {

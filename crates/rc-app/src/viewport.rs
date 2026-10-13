@@ -61,6 +61,7 @@ impl Viewport {
         ui: &mut egui::Ui,
         objects: &[DrawObject],
         style: &SceneStyle,
+        tool_busy: bool,
     ) -> ViewportOutput {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
@@ -77,7 +78,9 @@ impl Viewport {
         let to_local =
             |p: Pos2| DVec2::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y));
 
-        self.handle_input(ui, &response, rect, size);
+        if !tool_busy {
+            self.handle_input(ui, &response, rect, size);
+        }
         if response.clicked_by(egui::PointerButton::Primary) {
             out.clicked = response.interact_pointer_pos().map(to_local);
         }

@@ -213,3 +213,76 @@ fn world_bounds_follow_transforms() {
     ed.mark_saved();
     assert!(!ed.is_dirty());
 }
+
+#[test]
+fn primitives_add_resize_drop_and_align() {
+    use rc_doc::{AlignMode, PrimitiveKind};
+    let mut ed = Editor::default();
+    let a = ed
+        .apply(Command::AddPrimitive {
+            primitive: PrimitiveKind::Box.default_primitive(),
+            position: DVec3::new(0.0, 0.0, 15.0),
+            color: [1, 2, 3],
+        })
+        .unwrap()
+        .created[0];
+    assert_eq!(ed.doc().get(a).unwrap().name, "Box");
+    let b = ed
+        .apply(Command::AddPrimitive {
+            primitive: PrimitiveKind::Cylinder.default_primitive(),
+            position: DVec3::new(40.0, 0.0, 0.0),
+            color: [1, 2, 3],
+        })
+        .unwrap()
+        .created[0];
+    let bounds = ed.doc().world_bounds(a);
+    assert_eq!(bounds.min, Vec3::new(-10.0, -10.0, 15.0));
+
+    ed.apply(Command::DropToPlate(vec![a])).unwrap();
+    assert_eq!(ed.doc().world_bounds(a).min.z, 0.0);
+
+    let bigger = PrimitiveKind::Box
+        .default_primitive()
+        .with_size(DVec3::new(40.0, 20.0, 5.0));
+    ed.apply(Command::SetPrimitives(vec![(a, bigger)])).unwrap();
+    assert_eq!(ed.doc().world_bounds(a).size(), Vec3::new(40.0, 20.0, 5.0));
+
+    ed.apply(Command::Align {
+        nodes: vec![a, b],
+        axis: 0,
+        mode: AlignMode::Max,
+    })
+    .unwrap();
+    let (ba, bb) = (ed.doc().world_bounds(a), ed.doc().world_bounds(b));
+    assert!((ba.max.x - bb.max.x).abs() < 1e-5);
+
+    let invalid = rc_doc::Primitive::Torus {
+        size: DVec3::splat(10.0),
+        tube: 20.0,
+        segments: None,
+    };
+    assert!(
+        ed.apply(Command::SetPrimitives(vec![(a, invalid)]))
+            .is_err()
+    );
+}
+
+#[test]
+fn free_position_avoids_existing_objects() {
+    let mut ed = Editor::default();
+    let size = DVec3::splat(20.0);
+    assert_eq!(ed.doc().free_position(size), DVec3::ZERO);
+    let p = rc_doc::PrimitiveKind::Box.default_primitive();
+    ed.apply(Command::AddPrimitive {
+        primitive: p,
+        position: DVec3::ZERO,
+        color: [0; 3],
+    })
+    .unwrap();
+    let spot = ed.doc().free_position(size);
+    assert_ne!(spot, DVec3::ZERO);
+    assert!(
+        spot.length() <= 25.0 + 1e-9,
+        "nearest free grid spot: {spot:?}"
+    );
+}

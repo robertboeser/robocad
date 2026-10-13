@@ -5,7 +5,17 @@ use std::sync::Arc;
 use glam::DVec3;
 use rc_mesh::Mesh;
 
+use rc_kernel::Primitive;
+
 use crate::{DocError, Document, GroupOp, Node, NodeId, NodeKind, Role, Transform};
+
+/// Where to align along an axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlignMode {
+    Min,
+    Center,
+    Max,
+}
 
 /// A user-level edit. Every document change goes through one of these.
 #[derive(Clone, Debug)]
@@ -41,6 +51,21 @@ pub enum Command {
     Ungroup(Vec<NodeId>),
     SetGroupOp(NodeId, GroupOp),
     Duplicate(Vec<NodeId>),
+    /// Adds a primitive as a new root node, positioned in world space.
+    AddPrimitive {
+        primitive: Primitive,
+        position: DVec3,
+        color: [u8; 3],
+    },
+    SetPrimitives(Vec<(NodeId, Primitive)>),
+    /// Moves nodes down/up so their lowest point sits on z = 0.
+    DropToPlate(Vec<NodeId>),
+    /// Aligns nodes to the combined bounds of all of them along `axis` (0 = x, 1 = y, 2 = z).
+    Align {
+        nodes: Vec<NodeId>,
+        axis: usize,
+        mode: AlignMode,
+    },
 }
 
 impl Command {
@@ -60,6 +85,10 @@ impl Command {
             Self::Ungroup(_) => "Ungroup",
             Self::SetGroupOp(..) => "Group mode",
             Self::Duplicate(_) => "Duplicate",
+            Self::AddPrimitive { .. } => "Add shape",
+            Self::SetPrimitives(_) => "Shape",
+            Self::DropToPlate(_) => "Drop to plate",
+            Self::Align { .. } => "Align",
         }
     }
 }
@@ -467,7 +496,67 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
         Command::SetGroupOp(id, new_op) => {
             match &mut doc.get_mut(id).ok_or(DocError::NotFound)?.kind {
                 NodeKind::Group { op, .. } => *op = new_op,
-                NodeKind::Imported { .. } => return Err(DocError::NotAGroup),
+                NodeKind::Imported { .. } | NodeKind::Primitive(_) => {
+                    return Err(DocError::NotAGroup);
+                }
+            }
+        }
+        Command::AddPrimitive {
+            primitive,
+            position,
+            color,
+        } => {
+            primitive.validate().map_err(DocError::Invalid)?;
+            let mut node = Node::new(
+                doc.unique_name(primitive.kind().name()),
+                NodeKind::Primitive(primitive),
+            );
+            node.transform = Transform::from_translation(position);
+            node.color = color;
+            let id = doc.insert(node, None, None)?;
+            sel.set([id]);
+            out.created.push(id);
+        }
+        Command::SetPrimitives(list) => {
+            for (id, p) in list {
+                if doc.is_effectively_locked(id) {
+                    continue;
+                }
+                p.validate().map_err(DocError::Invalid)?;
+                match &mut doc.get_mut(id).ok_or(DocError::NotFound)?.kind {
+                    NodeKind::Primitive(old) => *old = p,
+                    _ => return Err(DocError::Invalid("not a primitive".into())),
+                }
+            }
+        }
+        Command::DropToPlate(ids) => {
+            for id in top_level(doc, &ids) {
+                let b = doc.world_bounds(id);
+                if !b.is_empty() && !doc.is_effectively_locked(id) {
+                    doc.translate_world(id, DVec3::new(0.0, 0.0, -f64::from(b.min.z)))?;
+                }
+            }
+        }
+        Command::Align { nodes, axis, mode } => {
+            let ids = top_level(doc, &nodes);
+            let all = doc.bounds_of(&ids);
+            if all.is_empty() || axis > 2 {
+                return Ok(out);
+            }
+            let pick = |b: &rc_mesh::Aabb| match mode {
+                AlignMode::Min => f64::from(b.min[axis]),
+                AlignMode::Center => f64::from(b.center()[axis]),
+                AlignMode::Max => f64::from(b.max[axis]),
+            };
+            let target = pick(&all);
+            for id in ids {
+                let b = doc.world_bounds(id);
+                if b.is_empty() || doc.is_effectively_locked(id) {
+                    continue;
+                }
+                let mut d = DVec3::ZERO;
+                d[axis] = target - pick(&b);
+                doc.translate_world(id, d)?;
             }
         }
         Command::Duplicate(ids) => {

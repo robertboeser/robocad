@@ -8,5 +8,6 @@ pub mod expr;
 pub mod transform;
 
 pub use document::{DocError, DocSettings, Document, GroupOp, Node, NodeId, NodeKind, Role};
-pub use editor::{Command, Editor, Selection};
+pub use editor::{AlignMode, Command, Editor, Selection};
+pub use rc_kernel::{Primitive, PrimitiveKind};
 pub use transform::Transform;
