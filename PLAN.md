@@ -79,7 +79,7 @@ Toolchain present on the dev machine: `rustc/cargo 1.98`. Use **edition 2024**, 
 | GPU | `wgpu` (via `egui-wgpu`) | Use the same wgpu version eframe re-exports. Custom 3D pass via egui paint callback. |
 | Math | `glam` | `f64` (`DVec3`, `DQuat`, `DMat4`) for document/transforms, `f32` for GPU and mesh storage. |
 | Byte casting | `bytemuck` | Zero-copy vertex buffers and binary STL parsing. |
-| Large files | `memmap2` | Memory-map STL files for parsing. |
+| Large files | (none) | Files are read with `std::fs::read`; memory mapping needs `unsafe` and reading is far cheaper than parsing. |
 | Float parsing | `fast-float` (or `fast-float2`) | ASCII STL. |
 | Parallelism | `rayon` | STL parse, welding, analysis. |
 | Booleans/kernel | Manifold Rust bindings (candidates: `manifold3d`, `manifold-rs`) | **Verify** which crate is maintained. If none is acceptable, write a thin `-sys` crate with `bindgen` against Manifold's C API (`manifoldc`) built via `cmake` crate. Hidden behind `trait GeometryKernel`. |
@@ -257,7 +257,7 @@ pub trait GeometryKernel: Send + Sync {
 ### 3.9 STL handling details
 
 - **Detection**: binary vs ASCII must not trust the `solid` header (many binary files start with "solid"). Rule: if file size == 84 + 50 × tri_count, it is binary; otherwise try ASCII.
-- **Binary parsing**: mmap, parse records in parallel chunks with rayon, ignore the stored normals (recompute; many exporters write garbage normals), ignore attribute bytes (optionally read VisCAM/SolidView color bits later).
+- **Binary parsing**: read the file into memory, parse records in parallel chunks with rayon, ignore the stored normals (recompute; many exporters write garbage normals), ignore attribute bytes (optionally read VisCAM/SolidView color bits later).
 - **ASCII parsing**: hand-written tokenizer over bytes, `fast-float`, tolerant of whitespace/case variations, multiple `solid` blocks.
 - **Welding**: exact weld using a hash map on the bit patterns of the f32 triple (fast, lossless). Optional epsilon weld (grid-quantized, default 1e-5 × bbox diagonal) used by Repair.
 - **Export**: binary STL by default (ASCII optional), normals computed from geometry, header `"robocad <version>"`. Units are mm (STL has no units; offer "imported file is in inches/metres" scale option on import).
@@ -342,7 +342,7 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - License files, update `README.md` (build instructions).
 - **Accept**: `cargo build --workspace` and `cargo test --workspace` pass locally and in CI; `cargo run -p rc-app` opens an empty window titled "robocad".
 
-### M1 — Mesh core & STL I/O (headless)
+### M1 — Mesh core & STL I/O (headless) — ✅ DONE
 - `rc-mesh`: `Mesh`, `Aabb`, binary + ASCII STL read/write (§3.9), exact welding, `MeshInfo` (volume, area, bbox), `TopologyReport`, BVH with ray cast.
 - `rc-cli`: `robocad-cli info <file.stl>` (prints counts, bbox, volume, watertight status) and `robocad-cli convert <in> <out> [--ascii]`.
 - Fixtures (each < 100 KB): cube (12 tris), ASCII cube, binary file whose header starts with "solid", cube with a missing triangle, two overlapping cubes, a non-manifold "bowtie", flipped-normal cube, truncated file, empty file.

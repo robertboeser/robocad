@@ -4,14 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "Headless command-line tools for robocad"
 
 [[bin]]
 name = "robocad-cli"
 path = "src/main.rs"
 
 [dependencies]
+rc-mesh.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

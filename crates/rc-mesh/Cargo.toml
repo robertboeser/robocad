@@ -4,8 +4,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "Mesh data structures, STL I/O, BVH, analysis and repair for robocad"
 
 [dependencies]
+glam.workspace = true
+bytemuck.workspace = true
+fast-float2.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+rustc-hash = "2.1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+tempfile.workspace = true
+
+[[bench]]
+name = "stl"
+harness = false
 
 [lints]
 workspace = true
