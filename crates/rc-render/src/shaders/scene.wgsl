@@ -12,7 +12,9 @@ struct Globals {
     plate_color: vec4<f32>,
     grid_color: vec4<f32>,
     edge_params: vec4<f32>,     // x = depth offset factor
-    viewport: vec4<f32>,        // x, y pixel size
+    viewport: vec4<f32>,        // x, y pixel size, z outline width in pixels
+    selection_color: vec4<f32>,
+    hover_color: vec4<f32>,
 };
 
 struct Object {
@@ -96,9 +98,7 @@ fn shade(world: vec3<f32>, front: bool) -> vec3<f32> {
     let spec = pow(max(dot(n, h), 0.0), 48.0) * 0.12;
     var color = base * (ambient + key + fill) + vec3<f32>(spec);
     if obj.flags.x > 0.5 {
-        // Selection: rim highlight in the selection colour, keeps the object's own colour.
-        let rim = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 2.5);
-        color = mix(color, obj.edge_color.rgb, clamp(rim * 0.9 + 0.06, 0.0, 1.0));
+        color = mix(color, vec3<f32>(1.0), 0.06);
     }
     return color;
 }
@@ -200,4 +200,46 @@ fn fs_grid(in: GridOut) -> @location(0) vec4<f32> {
     let dist = length(g.camera_pos.xyz - vec3<f32>(in.xy, 0.0));
     let fade = clamp(1.0 - dist / (g.camera_pos.w * 6.0 + 600.0), 0.0, 1.0);
     return vec4<f32>(color.rgb, color.a * fade);
+}
+
+// ---------------------------------------------------------------- selection outline
+
+@group(2) @binding(0) var mask_tex: texture_2d<f32>;
+
+@fragment
+fn fs_mask(in: MeshOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(obj.flags.x, obj.flags.y, 0.0, 1.0);
+}
+
+fn mask_at(p: vec2<i32>) -> vec2<f32> {
+    let dims = vec2<i32>(textureDimensions(mask_tex));
+    return textureLoad(mask_tex, clamp(p, vec2<i32>(0), dims - 1), 0).rg;
+}
+
+@fragment
+fn fs_outline(in: BgOut) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(in.pos.xy);
+    let centre = mask_at(p);
+    if centre.r > 0.5 {
+        discard;
+    }
+    let r = max(g.viewport.z, 1.0);
+    var sel = 0.0;
+    var hov = 0.0;
+    // Two rings of 12 samples give a smooth, cheap dilation.
+    for (var i = 0; i < 12; i = i + 1) {
+        let a = f32(i) * 0.5235988;
+        let d = vec2<f32>(cos(a), sin(a));
+        let s1 = mask_at(p + vec2<i32>(round(d * r)));
+        let s2 = mask_at(p + vec2<i32>(round(d * r * 0.5)));
+        sel = max(sel, max(s1.r, s2.r));
+        hov = max(hov, max(s1.g, s2.g));
+    }
+    if sel > 0.5 {
+        return g.selection_color;
+    }
+    if hov > 0.5 && centre.g < 0.5 {
+        return g.hover_color;
+    }
+    discard;
 }

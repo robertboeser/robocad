@@ -23,6 +23,9 @@ pub struct SceneStyle {
     pub grid_color: [f32; 4],
     pub edge_color: [f32; 4],
     pub selection_color: [f32; 4],
+    pub hover_color: [f32; 4],
+    /// Selection outline width in physical pixels.
+    pub outline_width: f32,
     pub boundary_edge_color: [f32; 4],
     pub non_manifold_edge_color: [f32; 4],
     /// Build plate size in mm (x, y), centred on the origin.
@@ -44,6 +47,8 @@ impl SceneStyle {
             grid_color: rgb(0x8a_93_a0, 0.6),
             edge_color: rgb(0x10_12_14, 0.85),
             selection_color: rgb(0xff_a5_1f, 1.0),
+            hover_color: rgb(0xff_e0_a0, 0.55),
+            outline_width: 3.0,
             boundary_edge_color: rgb(0xff_30_30, 1.0),
             non_manifold_edge_color: rgb(0xff_8c_00, 1.0),
             plate_size: [220.0, 220.0],

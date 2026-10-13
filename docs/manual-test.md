@@ -15,3 +15,12 @@ Run before tagging a release. Use a release build: `cargo run --release -p rc-ap
 - [ ] Resize the window and move it between a Retina and a non-Retina display: image stays sharp.
 - [ ] Switch the OS between light and dark mode: UI and viewport follow.
 - [ ] Idle CPU in Activity Monitor is ~0 %.
+
+## Document & editing (M3)
+- [ ] Click selects, Shift/⌘-click toggles, drag on empty space box-selects, Esc clears.
+- [ ] Delete, ⌘D, ⌘G, ⇧⌘G, H, ⌘A work; ⌘Z / ⇧⌘Z undo and redo every step.
+- [ ] Dragging a number field changes the value live and undoes in one step.
+- [ ] Typing `20/2+3` into a field gives 13; `2,5` gives 2.5.
+- [ ] Scene tree: double-click renames, eye hides, lock prevents moving and selecting in the viewport.
+- [ ] Drag a tree row onto a group (moves inside) and between rows (reorders).
+- [ ] Window title shows • after changes.

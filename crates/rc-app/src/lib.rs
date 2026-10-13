@@ -1,0 +1,9 @@
+//! robocad desktop application (library part, so UI tests can drive the app headlessly).
+
+pub mod app;
+pub mod loader;
+pub mod properties;
+pub mod scene_panel;
+pub mod viewport;
+
+pub use app::RobocadApp;

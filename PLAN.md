@@ -157,7 +157,7 @@ pub struct Document {
 }
 pub struct Node {
     pub name: String,
-    pub transform: Transform,          // translation DVec3, rotation DQuat, scale DVec3 (non-uniform allowed)
+    pub transform: Transform,          // translation DVec3, rotation as Euler degrees DVec3 (R = Rz·Ry·Rx), scale DVec3
     pub kind: NodeKind,
     pub role: Role,                    // Solid | Hole
     pub color: [u8; 3],
@@ -226,7 +226,7 @@ pub trait GeometryKernel: Send + Sync {
 - Lighting: simple two-light + hemispheric ambient (or a matcap); readable, cheap.
 - **Feature edges**: computed once per mesh on CPU (dihedral angle > 30° or boundary), drawn as a line list on top with depth bias. Toggle in view menu.
 - **Holes**: drawn after opaque objects, translucent grey with depth test, no depth write (Tinkercad look).
-- **Selection**: rim (Fresnel-style) highlight in the accent colour plus accent-coloured feature edges; the object keeps its own colour. Hover highlight.
+- **Selection**: screen-space outline (selected/hovered objects are drawn into a mask texture, a full-screen pass dilates it) in the accent colour; the object keeps its own colour. Hover gets a lighter outline and slight brightening.
 - **Non-manifold diagnostics overlay**: boundary edges in red, non-manifold edges in orange.
 - Build plate: configurable size (default 220 × 220 mm), grid with 1 mm/10 mm lines drawn procedurally in a fragment shader (one quad, fades with distance). Axis indicator and a small **view cube** (clickable top/front/right/iso).
 - Camera: orbit around pivot, pan, zoom-to-cursor; perspective ↔ orthographic toggle; "frame selection" (F). Pivot = point under cursor on mouse-down (via BVH ray cast), falling back to scene center.
@@ -355,7 +355,7 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - Reactive repaint (verify idle CPU ≈ 0 % with Activity Monitor).
 - **Accept**: open a 1 M-triangle STL in < 0.5 s and orbit at 60 fps; resizing and HiDPI work; dark/light theme; trackpad orbit/pan/pinch work on macOS.
 
-### M3 — Document, selection, properties, undo
+### M3 — Document, selection, properties, undo — ✅ DONE
 - `rc-doc`: `Document`, `Node`, `Command` enum, `apply`, snapshot undo/redo with transactions, `MeshStore`.
 - Imported STLs become `Imported` nodes. Scene tree panel (select, rename, visibility, lock, delete, reorder). Picking via BVH; hover + selection highlight; box select.
 - Properties panel with numeric transform fields (incl. expression parser), color picker.
@@ -418,6 +418,7 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 | Golden | Evaluated sample projects → hash or volume/bbox snapshot | `insta` snapshots in `rc-doc` |
 | CLI | `robocad-cli` commands on fixtures | `tests/` integration tests (`assert_cmd`) |
 | Benchmarks | STL parse, weld, BVH build, boolean, repair | `criterion` in `benches/` |
+| UI | Headless app tests with simulated mouse/keyboard (`egui_kittest` + wgpu), skipped without a GPU; `ROBOCAD_SNAPSHOT_DIR` saves rendered frames | `crates/rc-app/tests/ui.rs` |
 | Manual | UI checklist per milestone (in `docs/manual-test.md`): trackpad, HiDPI, themes, slicer import | before tagging |
 
 Keep the GUI layer thin: logic lives in `rc-doc`/`rc-mesh`/`rc-kernel`, which are fully testable headlessly. The app only maps input → `Command`s and draws state.

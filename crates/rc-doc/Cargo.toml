@@ -4,8 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "Document model, commands and undo/redo for robocad"
 
 [dependencies]
+rc-mesh.workspace = true
+glam.workspace = true
+slotmap.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
 
 [lints]
 workspace = true

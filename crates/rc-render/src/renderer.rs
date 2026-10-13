@@ -18,6 +18,7 @@ const SAMPLES: u32 = 4;
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const COLOR_VIEW_UNORM: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 const EDGE_DEPTH_OFFSET: f32 = 0.0008;
 
 /// How an object is drawn.
@@ -66,6 +67,8 @@ struct GlobalsUniform {
     grid_color: [f32; 4],
     edge_params: [f32; 4],
     viewport: [f32; 4],
+    selection_color: [f32; 4],
+    hover_color: [f32; 4],
 }
 
 #[repr(C)]
@@ -93,6 +96,8 @@ struct Targets {
     resolve: wgpu::Texture,
     resolve_view: wgpu::TextureView,
     output_view: wgpu::TextureView,
+    mask_view: wgpu::TextureView,
+    mask_bind: wgpu::BindGroup,
 }
 
 struct Pipelines {
@@ -101,6 +106,8 @@ struct Pipelines {
     mesh_transparent: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
     grid: wgpu::RenderPipeline,
+    mask: wgpu::RenderPipeline,
+    outline: wgpu::RenderPipeline,
 }
 
 /// The robocad scene renderer.
@@ -109,6 +116,7 @@ pub struct Renderer {
     globals: wgpu::Buffer,
     globals_bind: wgpu::BindGroup,
     object_layout: wgpu::BindGroupLayout,
+    mask_layout: wgpu::BindGroupLayout,
     objects: wgpu::Buffer,
     objects_bind: wgpu::BindGroup,
     object_capacity: usize,
@@ -142,9 +150,31 @@ impl Renderer {
             label: Some("object"),
             entries: &[uniform_entry(true, std::mem::size_of::<ObjectUniform>())],
         });
+        let mask_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("selection mask"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scene"),
             bind_group_layouts: &[Some(&globals_layout), Some(&object_layout)],
+            immediate_size: 0,
+        });
+        let outline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("outline"),
+            bind_group_layouts: &[
+                Some(&globals_layout),
+                Some(&object_layout),
+                Some(&mask_layout),
+            ],
             immediate_size: 0,
         });
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
@@ -166,12 +196,13 @@ impl Renderer {
         let object_capacity = 64;
         let (objects, objects_bind) =
             create_object_buffer(device, &object_layout, object_stride, object_capacity);
-        let pipelines = create_pipelines(device, &layout, &shader);
+        let pipelines = create_pipelines(device, &layout, &outline_layout, &shader);
         Self {
             pipelines,
             globals,
             globals_bind,
             object_layout,
+            mask_layout,
             objects,
             objects_bind,
             object_capacity,
@@ -301,6 +332,22 @@ impl Renderer {
                 | wgpu::TextureUsages::COPY_SRC,
             &[COLOR_VIEW_UNORM],
         );
+        let mask = tex(
+            "selection mask",
+            MASK_FORMAT,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            &[],
+        );
+        let mask_view = mask.create_view(&wgpu::TextureViewDescriptor::default());
+        let mask_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("selection mask"),
+            layout: &self.mask_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&mask_view),
+            }],
+        });
         let output_view = resolve.create_view(&wgpu::TextureViewDescriptor {
             format: Some(COLOR_VIEW_UNORM),
             ..Default::default()
@@ -312,6 +359,8 @@ impl Renderer {
             resolve_view: resolve.create_view(&wgpu::TextureViewDescriptor::default()),
             resolve,
             output_view,
+            mask_view,
+            mask_bind,
         });
         self.generation += 1;
     }
@@ -400,6 +449,38 @@ impl Renderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene"),
         });
+        let stride_u = stride;
+        let highlighted = visible.iter().any(|o| o.selected || o.hovered);
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("selection mask"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &targets.mask_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipelines.mask);
+            pass.set_bind_group(0, &self.globals_bind, &[]);
+            for (i, o) in visible.iter().enumerate() {
+                if !(o.selected || o.hovered) {
+                    continue;
+                }
+                let m = &self.meshes[&o.mesh];
+                pass.set_bind_group(1, &self.objects_bind, &[(i * 3 * stride_u) as u32]);
+                pass.set_vertex_buffer(0, m.vertices.slice(..));
+                pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..m.index_count, 0, 0..1);
+            }
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
@@ -475,6 +556,13 @@ impl Renderer {
                 pass.set_vertex_buffer(0, m.vertices.slice(..));
                 pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..m.index_count, 0, 0..1);
+            }
+
+            if highlighted {
+                pass.set_pipeline(&self.pipelines.outline);
+                pass.set_bind_group(1, &self.objects_bind, &[0]);
+                pass.set_bind_group(2, &targets.mask_bind, &[]);
+                pass.draw(0..3, 0..1);
             }
         }
         queue.submit([encoder.finish()]);
@@ -586,7 +674,9 @@ fn globals_uniform(frame: &FrameDesc<'_>, aspect: f64, size: [u32; 2]) -> Global
         plate_color: style.plate_color,
         grid_color: style.grid_color,
         edge_params: [EDGE_DEPTH_OFFSET, 0.0, 0.0, 0.0],
-        viewport: [size[0] as f32, size[1] as f32, 0.0, 0.0],
+        viewport: [size[0] as f32, size[1] as f32, style.outline_width, 0.0],
+        selection_color: style.selection_color,
+        hover_color: style.hover_color,
     }
 }
 
@@ -633,6 +723,7 @@ fn create_object_buffer(
 fn create_pipelines(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
+    outline_layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
 ) -> Pipelines {
     use wgpu::CompareFunction as C;
@@ -642,14 +733,15 @@ fn create_pipelines(
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &wgpu::vertex_attr_array![0 => Float32x3],
     })];
-    let make = |label: &str,
-                vs: &str,
-                fs: &str,
-                buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
-                topology: wgpu::PrimitiveTopology,
-                depth_write: bool,
-                depth_compare: wgpu::CompareFunction,
-                blend: Option<wgpu::BlendState>| {
+    let make_with = |layout: &wgpu::PipelineLayout,
+                     label: &str,
+                     vs: &str,
+                     fs: &str,
+                     buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+                     topology: wgpu::PrimitiveTopology,
+                     depth_write: bool,
+                     depth_compare: wgpu::CompareFunction,
+                     blend: Option<wgpu::BlendState>| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(layout),
@@ -689,6 +781,26 @@ fn create_pipelines(
             multiview_mask: None,
             cache: None,
         })
+    };
+    let make = |label: &str,
+                vs: &str,
+                fs: &str,
+                buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+                topology: wgpu::PrimitiveTopology,
+                depth_write: bool,
+                depth_compare: wgpu::CompareFunction,
+                blend: Option<wgpu::BlendState>| {
+        make_with(
+            layout,
+            label,
+            vs,
+            fs,
+            buffers,
+            topology,
+            depth_write,
+            depth_compare,
+            blend,
+        )
     };
     let alpha = Some(wgpu::BlendState::ALPHA_BLENDING);
     Pipelines {
@@ -742,7 +854,61 @@ fn create_pipelines(
             C::Greater,
             alpha,
         ),
+        outline: make_with(
+            outline_layout,
+            "outline",
+            "vs_background",
+            "fs_outline",
+            &[],
+            T::TriangleList,
+            false,
+            C::Always,
+            alpha,
+        ),
+        mask: create_mask_pipeline(device, layout, shader, &vertex_layout),
     }
+}
+
+/// Selection mask: selected/hovered flags into an R/G texture, no depth, max-blended.
+fn create_mask_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    vertex_layout: &[Option<wgpu::VertexBufferLayout<'_>>],
+) -> wgpu::RenderPipeline {
+    let max = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("selection mask"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_mesh"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: vertex_layout,
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_mask"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: MASK_FORMAT,
+                blend: Some(wgpu::BlendState {
+                    color: max,
+                    alpha: max,
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 /// Creates a GPU device without a window (for PNG rendering and visual tests).

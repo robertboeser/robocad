@@ -63,7 +63,8 @@ impl Loader {
     }
 }
 
-fn load_file(path: PathBuf) -> LoadResult {
+/// Loads and analyses a mesh file on the calling thread.
+pub fn load_file(path: PathBuf) -> LoadResult {
     let start = Instant::now();
     let file = match stl::read_file(&path) {
         Ok(f) => f,

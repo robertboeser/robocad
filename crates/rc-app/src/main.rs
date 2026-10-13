@@ -1,9 +1,5 @@
 //! robocad desktop application.
 
-mod app;
-mod loader;
-mod viewport;
-
 use std::path::PathBuf;
 
 fn main() -> eframe::Result {
@@ -21,6 +17,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "robocad",
         options,
-        Box::new(move |cc| Ok(Box::new(app::RobocadApp::new(cc, files)))),
+        Box::new(move |cc| Ok(Box::new(rc_app::RobocadApp::new(cc, files)))),
     )
 }

@@ -9,13 +9,20 @@ use rc_render::{
 };
 
 /// What happened in the viewport this frame.
-#[derive(Default)]
 pub struct ViewportOutput {
     /// Pointer position relative to the viewport (points), if hovered.
     pub hover: Option<DVec2>,
     /// Primary click without drag, relative to the viewport.
     pub clicked: Option<DVec2>,
     pub viewport_size: DVec2,
+    /// Screen rectangle of the viewport.
+    pub rect: Rect,
+    pub drag_started_primary: bool,
+    pub drag_stopped_primary: bool,
+    /// Where the current primary press started, relative to the viewport.
+    pub press_origin: Option<DVec2>,
+    /// Pointer position relative to the viewport, even outside it.
+    pub pointer_local: Option<DVec2>,
 }
 
 pub struct Viewport {
@@ -58,8 +65,14 @@ impl Viewport {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
         let mut out = ViewportOutput {
+            hover: None,
+            clicked: None,
             viewport_size: size,
-            ..Default::default()
+            rect,
+            drag_started_primary: false,
+            drag_stopped_primary: false,
+            press_origin: None,
+            pointer_local: None,
         };
         let to_local =
             |p: Pos2| DVec2::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y));
@@ -69,6 +82,10 @@ impl Viewport {
             out.clicked = response.interact_pointer_pos().map(to_local);
         }
         out.hover = response.hover_pos().map(to_local);
+        out.drag_started_primary = response.drag_started_by(egui::PointerButton::Primary);
+        out.drag_stopped_primary = response.drag_stopped_by(egui::PointerButton::Primary);
+        out.press_origin = ui.input(|i| i.pointer.press_origin()).map(to_local);
+        out.pointer_local = ui.input(|i| i.pointer.latest_pos()).map(to_local);
 
         let ppp = ui.ctx().pixels_per_point();
         let px = [
