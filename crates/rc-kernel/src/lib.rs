@@ -1,6 +1,7 @@
-//! Geometry kernel for robocad: parametric primitives and (from M5) solid boolean operations.
+//! Geometry kernel for robocad: parametric primitives, solid boolean operations and edge rounding.
 
 pub mod primitive;
+pub mod round;
 pub mod solid;
 pub mod text;
 

@@ -339,6 +339,36 @@ mod tests {
     }
 
     #[test]
+    fn modifiers_round_trip_and_are_omitted_when_unused() {
+        let mut ed = sample();
+        let manifest = |ed: &Editor| {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            write_to(ed.doc(), None, None, &mut buf).unwrap();
+            buf.set_position(0);
+            (read_from(buf.clone()).unwrap(), buf.into_inner())
+        };
+        let json = |zip: Vec<u8>| {
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(zip)).unwrap();
+            std::io::read_to_string(z.by_name("document.json").unwrap()).unwrap()
+        };
+        let (_, plain) = manifest(&ed);
+        assert!(
+            !json(plain).contains("modifier"),
+            "old files stay unchanged"
+        );
+
+        let g = ed.doc().roots[0];
+        ed.apply(Command::SetModifier(
+            g,
+            Some(crate::Modifier::RoundEdges { radius: 1.5 }),
+        ))
+        .unwrap();
+        let (p, zip) = manifest(&ed);
+        assert_eq!(&p.document, ed.doc());
+        assert!(json(zip).contains("RoundEdges"));
+    }
+
+    #[test]
     fn save_load_file_and_thumbnail() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("x.rcad");

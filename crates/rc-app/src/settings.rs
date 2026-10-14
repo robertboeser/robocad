@@ -1,5 +1,6 @@
 //! User settings stored as JSON in the OS configuration directory.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,8 @@ pub struct Settings {
     pub recent_files: Vec<PathBuf>,
     /// The first-steps card was dismissed.
     pub hints_shown: bool,
+    /// Ids of enabled extensions (see `crate::extensions`); all are off by default.
+    pub extensions: BTreeSet<String>,
 }
 
 impl Default for Settings {
@@ -74,6 +77,7 @@ impl Default for Settings {
             autosave_minutes: 2,
             recent_files: Vec::new(),
             hints_shown: false,
+            extensions: BTreeSet::new(),
         }
     }
 }

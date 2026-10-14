@@ -215,6 +215,9 @@ fn project_info(path: &Path) -> Result<()> {
             rc_doc::NodeKind::Group {
                 pattern: Some(_), ..
             } => "pattern group".into(),
+            rc_doc::NodeKind::Group {
+                modifier: Some(m), ..
+            } => format!("group ({})", m.name().to_lowercase()),
             rc_doc::NodeKind::Group { .. } => "group".into(),
         };
         let role = if n.role == rc_doc::Role::Hole {

@@ -65,6 +65,20 @@ Release app after M5: binary 11.8 MB (target < 25 MB), warm start ~85 ms, empty-
 |---|---|---|
 | 110 × 110 mm plate minus a 10 × 10 grid of cylinders (release) | ~30 ms | < 500 ms |
 
+## Round edges (M10)
+
+`cargo run --release -p rc-kernel --example round_timing` (radius 0.5–2 mm):
+
+| Shape | Input triangles | Time |
+|---|---|---|
+| Box 40 × 30 × 10 mm (convex fast path) | 12 | < 1 ms |
+| Cylinder 20 mm (convex fast path) | 192 | 2–3 ms |
+| Sphere 20 mm (convex fast path) | 2,208 | 20–30 ms |
+| Plate with a through-hole (Minkowski path) | 144 | 0.4–0.7 s |
+| Torus 30 mm (Minkowski path, 8-segment ball) | 3,584 | 3–4.5 s |
+
+The general path grows with triangle count × ball vertices; it runs on the evaluation worker.
+
 ## M9 tools
 
 - `cargo run --release -p rc-mesh --example repair_timing -- file.stl` — time per repair step

@@ -408,6 +408,11 @@ Each milestone ends with: all tests green, `cargo clippy --all-targets -- -D war
 - Release workflow in GitHub Actions that builds artifacts on tags.
 - **Accept**: all §1 targets met and recorded in `docs/performance.md`; a new user can follow README to download, open an STL, add a hole, and export in under 5 minutes.
 
+### M10 — Extension system & round edges — ✅ DONE
+- Requested by the owner after v1. Optional extensions, compiled in and **disabled by default** (Preferences → Extensions), add toolbar/menu/properties UI; their geometry lives in `rc-doc`/`rc-kernel` so documents evaluate with or without the extension enabled (ADR 0002).
+- First extension: **Round edges** — `Modifier::RoundEdges { radius }` on a wrapper group; morphological opening by a ball rounds every convex edge and corner, keeps faces in place and concave edges sharp. (This rounds *all* outward edges; fillets on chosen edges remain a non-goal.)
+- **Accept**: rounded box matches the analytic volume (< 0.2 %) with unchanged bounds; concave edges stay sharp; too-large radius gives a clear error; extension UI hidden by default and its enabled state persists (UI test).
+
 ### Later (not scheduled)
 - Sketch + extrude/revolve (2D polygon editor on a plane), simple chamfers on boxes/cylinders as primitive parameters, screw threads generator, hull/Minkowski, decimation (quadric simplification), plane cut/split for printing, WASM/web build, scripting (Rhai or Lua) for parametric parts, STEP import (via OpenCascade — heavy, only if needed).
 

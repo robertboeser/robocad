@@ -612,6 +612,8 @@ impl RobocadApp {
                         .on_hover_text("0 turns autosave off");
                         ui.end_row();
                     });
+                ui.separator();
+                self.extensions_preferences(ui);
             });
         if !open {
             self.project.show_preferences = false;

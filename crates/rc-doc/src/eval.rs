@@ -14,7 +14,7 @@ use rc_kernel::{GeometryKernel, KernelError, ManifoldKernel, Solid};
 use rc_mesh::edges::{FeatureEdges, feature_edges};
 use rc_mesh::{Bvh, Mesh, MeshInfo};
 
-use crate::{Document, GroupOp, NodeId, NodeKind, Role};
+use crate::{Document, GroupOp, Modifier, NodeId, NodeKind, Role};
 
 /// Dihedral angle above which edges are drawn.
 pub const FEATURE_ANGLE_DEG: f32 = 30.0;
@@ -43,8 +43,13 @@ pub fn content_hash(doc: &Document, id: NodeId) -> Option<u64> {
             children,
             op,
             pattern,
+            modifier,
         } => {
             (3u8, *op as u8).hash(&mut h);
+            match modifier {
+                None => 0u8.hash(&mut h),
+                Some(Modifier::RoundEdges { radius }) => (1u8, radius.to_bits()).hash(&mut h),
+            }
             if let Some(p) = pattern {
                 for m in p.instances() {
                     for x in m.to_cols_array() {
@@ -177,6 +182,7 @@ pub fn eval_solid(doc: &Document, id: NodeId, cache: &mut SolidCache) -> Result<
             children,
             op,
             pattern,
+            modifier,
         } => {
             let mut solids = Vec::new();
             let mut holes = Vec::new();
@@ -196,11 +202,17 @@ pub fn eval_solid(doc: &Document, id: NodeId, cache: &mut SolidCache) -> Result<
                 GroupOp::Combine => k.union(&solids),
                 GroupOp::Intersect => k.intersection(&solids),
             };
-            let combined = if holes.is_empty() {
+            let mut combined = if holes.is_empty() {
                 base
             } else {
                 k.difference(&base, &k.union(&holes))
             };
+            if let Some(m) = modifier {
+                combined = apply_modifier(&combined, *m).map_err(|message| EvalError {
+                    node: node.name.clone(),
+                    message,
+                })?;
+            }
             match pattern {
                 None => combined,
                 Some(p) => {
@@ -216,6 +228,24 @@ pub fn eval_solid(doc: &Document, id: NodeId, cache: &mut SolidCache) -> Result<
     };
     cache.put(key, solid.clone());
     Ok(solid)
+}
+
+/// Applies a group modifier to the group's combined solid.
+fn apply_modifier(solid: &Solid, m: Modifier) -> Result<Solid, String> {
+    let k = ManifoldKernel;
+    match m {
+        Modifier::RoundEdges { radius } => {
+            let rounded = k.round_edges(solid, radius);
+            if k.is_empty(&rounded) && !k.is_empty(solid) {
+                return Err(format!(
+                    "the rounding radius ({radius} mm) is too large: every part of the object \
+                     is thinner than {} mm",
+                    radius * 2.0
+                ));
+            }
+            Ok(rounded)
+        }
+    }
 }
 
 /// Display data for an evaluated group.
@@ -654,6 +684,84 @@ mod tests {
         };
         assert!(ms < limit, "took {ms:.0} ms");
         eprintln!("100 holes evaluated in {ms:.0} ms");
+    }
+
+    #[test]
+    fn rounded_edges_evaluate_inside_groups() {
+        use crate::Modifier;
+        let mut ed = Editor::default();
+        let plate = add(
+            &mut ed,
+            PrimitiveKind::Box,
+            DVec3::new(40.0, 30.0, 10.0),
+            DVec3::ZERO,
+        );
+        let r = 2.0;
+        let rounded = ed
+            .apply(Command::AddModifier {
+                nodes: vec![plate],
+                modifier: Modifier::RoundEdges { radius: r },
+            })
+            .unwrap()
+            .created[0];
+        let mut cache = SolidCache::default();
+        let out = eval_display(ed.doc(), rounded, &mut cache).unwrap();
+        let edges = 4.0 * (40.0 + 30.0 + 10.0 - 6.0 * r);
+        let pi = std::f64::consts::PI;
+        let expected =
+            12_000.0 - (1.0 - pi / 4.0) * r * r * edges - 8.0 * (1.0 - pi / 6.0) * r * r * r;
+        assert!(
+            (out.info.volume - expected).abs() / expected < 2e-3,
+            "{} vs {expected}",
+            out.info.volume
+        );
+        assert!(rc_mesh::topology::analyze(&out.mesh).is_watertight());
+        let size = out.mesh.aabb().size();
+        assert!((size.x - 40.0).abs() < 1e-4 && (size.z - 10.0).abs() < 1e-4);
+
+        // A rounded hole cuts a pocket with rounded inner edges; the radius is part of the hash.
+        let hole = add(
+            &mut ed,
+            PrimitiveKind::Box,
+            DVec3::new(10.0, 10.0, 10.0),
+            DVec3::new(0.0, 0.0, 5.0),
+        );
+        ed.apply(Command::ToggleRole(vec![hole])).unwrap();
+        let rounded_hole = ed
+            .apply(Command::AddModifier {
+                nodes: vec![hole],
+                modifier: Modifier::RoundEdges { radius: 1.0 },
+            })
+            .unwrap()
+            .created[0];
+        let g = ed
+            .apply(Command::Group(vec![rounded, rounded_hole]))
+            .unwrap()
+            .created[0];
+        let with_pocket = eval_display(ed.doc(), g, &mut cache).unwrap().info.volume;
+        // Sharp pocket: 10 × 10 × 5 mm. Rounding its 8 lower edges and 4 corners keeps
+        // about (1 − π/4)·(32 + 16) + 4·(1 − π/6) ≈ 12 mm³ of material.
+        let sharp = out.info.volume - 10.0 * 10.0 * 5.0;
+        assert!(
+            with_pocket > sharp + 8.0 && with_pocket < sharp + 16.0,
+            "rounded pocket removes a little less than a sharp one: {with_pocket} vs {sharp}"
+        );
+        let h = content_hash(ed.doc(), g);
+        ed.apply(Command::SetModifier(
+            rounded_hole,
+            Some(Modifier::RoundEdges { radius: 2.0 }),
+        ))
+        .unwrap();
+        assert_ne!(content_hash(ed.doc(), g), h);
+
+        // A radius larger than half the thickness leaves nothing: a clear error, not an empty mesh.
+        ed.apply(Command::SetModifier(
+            rounded,
+            Some(Modifier::RoundEdges { radius: 6.0 }),
+        ))
+        .unwrap();
+        let err = eval_display(ed.doc(), rounded, &mut cache).err().unwrap();
+        assert!(err.message.contains("too large"), "{err}");
     }
 
     #[test]

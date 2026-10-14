@@ -7,7 +7,9 @@ use rc_mesh::Mesh;
 
 use rc_kernel::Primitive;
 
-use crate::{DocError, Document, GroupOp, Node, NodeId, NodeKind, Pattern, Role, Transform};
+use crate::{
+    DocError, Document, GroupOp, Modifier, Node, NodeId, NodeKind, Pattern, Role, Transform,
+};
 
 /// Where to align along an axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +58,13 @@ pub enum Command {
         pattern: Pattern,
     },
     SetPattern(NodeId, Option<Pattern>),
+    /// Wraps each node in its own new group carrying `modifier` (e.g. rounded edges). The group
+    /// takes over the node's solid/hole role, so rounding a hole rounds the cut.
+    AddModifier {
+        nodes: Vec<NodeId>,
+        modifier: Modifier,
+    },
+    SetModifier(NodeId, Option<Modifier>),
     Duplicate(Vec<NodeId>),
     /// Adds a primitive as a new root node, positioned in world space.
     AddPrimitive {
@@ -110,6 +119,10 @@ impl Command {
             Self::SetGroupOp(..) => "Group mode",
             Self::MakePattern { .. } => "Pattern",
             Self::SetPattern(..) => "Edit pattern",
+            Self::AddModifier { modifier, .. } | Self::SetModifier(_, Some(modifier)) => {
+                modifier.name()
+            }
+            Self::SetModifier(_, None) => "Remove modifier",
             Self::Duplicate(_) => "Duplicate",
             Self::AddPrimitive { .. } => "Add shape",
             Self::SetPrimitives(_) => "Shape",
@@ -498,6 +511,7 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
                     children: Vec::new(),
                     op: GroupOp::Combine,
                     pattern: None,
+                    modifier: None,
                 },
             );
             group.color = doc.get(first).map_or(group.color, |n| n.color);
@@ -516,9 +530,14 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
                     continue;
                 }
                 let parent = g.parent;
+                let hole = g.role == Role::Hole;
                 let children = g.children().to_vec();
                 let mut index = doc.index_in_parent(gid);
                 for c in children {
+                    // Solids of a hole group cut the parent; keep that after ungrouping.
+                    if hole {
+                        doc.get_mut(c).ok_or(DocError::NotFound)?.role = Role::Hole;
+                    }
                     doc.reparent(c, parent, index)?;
                     index = doc.index_in_parent(c).map(|i| i + 1);
                     new_sel.push(c);
@@ -539,23 +558,10 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
         Command::MakePattern { nodes, pattern } => {
             pattern.validate().map_err(DocError::Invalid)?;
             let ids = top_level(doc, &nodes);
-            let Some(&first) = ids.first() else {
+            if ids.is_empty() {
                 return Ok(out);
-            };
-            let parent = doc.get(first).ok_or(DocError::NotFound)?.parent;
-            let index = ids
-                .iter()
-                .filter(|id| doc.get(**id).is_some_and(|n| n.parent == parent))
-                .filter_map(|id| doc.index_in_parent(*id))
-                .min();
-            let bounds = doc.bounds_of(&ids);
-            let centre = if bounds.is_empty() {
-                DVec3::ZERO
-            } else {
-                let c = bounds.center().as_dvec3();
-                DVec3::new(c.x, c.y, f64::from(bounds.min.z))
-            };
-            let parent_world = parent.map_or(glam::DMat4::IDENTITY, |p| doc.world_matrix(p));
+            }
+            let centre = base_centre(doc, &ids);
             let mut pattern = pattern;
             if let Pattern::Circular { center, .. } = &mut pattern {
                 // Default: rotate about the vertical axis through the plate centre.
@@ -568,23 +574,36 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
                 Pattern::Grid { .. } => "Array",
                 Pattern::Circular { .. } => "Circular array",
             };
-            let mut group = Node::new(
-                doc.unique_name(name),
-                NodeKind::Group {
-                    children: Vec::new(),
-                    op: GroupOp::Combine,
-                    pattern: Some(pattern),
-                },
-            );
-            group.color = doc.get(first).map_or(group.color, |n| n.color);
-            group.transform =
-                Transform::from_translation(parent_world.inverse().transform_point3(centre));
-            let gid = doc.insert(group, parent, index)?;
-            for id in ids {
-                doc.reparent(id, Some(gid), None)?;
-            }
+            let name = doc.unique_name(name);
+            let gid = wrap_in_group(doc, &ids, name, Some(pattern), None)?;
             sel.set([gid]);
             out.created.push(gid);
+        }
+        Command::AddModifier { nodes, modifier } => {
+            modifier.validate().map_err(DocError::Invalid)?;
+            let mut created = Vec::new();
+            for id in top_level(doc, &nodes) {
+                let node = doc.get(id).ok_or(DocError::NotFound)?;
+                let (name, role) = (node.name.clone(), node.role);
+                let name = doc.unique_name(&match modifier {
+                    Modifier::RoundEdges { .. } => format!("Rounded {name}"),
+                });
+                let gid = wrap_in_group(doc, &[id], name, None, Some(modifier))?;
+                doc.get_mut(gid).ok_or(DocError::NotFound)?.role = role;
+                doc.get_mut(id).ok_or(DocError::NotFound)?.role = Role::Solid;
+                created.push(gid);
+            }
+            sel.set(created.iter().copied());
+            out.created = created;
+        }
+        Command::SetModifier(id, new) => {
+            if let Some(m) = &new {
+                m.validate().map_err(DocError::Invalid)?;
+            }
+            match &mut doc.get_mut(id).ok_or(DocError::NotFound)?.kind {
+                NodeKind::Group { modifier, .. } => *modifier = new,
+                _ => return Err(DocError::NotAGroup),
+            }
         }
         Command::SetPattern(id, new) => {
             if let Some(p) = &new {
@@ -719,6 +738,53 @@ fn execute(doc: &mut Document, sel: &mut Selection, cmd: Command) -> Result<Outc
         }
     }
     Ok(out)
+}
+
+/// Bottom centre of the combined world bounds of `ids` (origin for wrapping groups).
+fn base_centre(doc: &Document, ids: &[NodeId]) -> DVec3 {
+    let bounds = doc.bounds_of(ids);
+    if bounds.is_empty() {
+        return DVec3::ZERO;
+    }
+    let c = bounds.center().as_dvec3();
+    DVec3::new(c.x, c.y, f64::from(bounds.min.z))
+}
+
+/// Inserts a new group where the first of `ids` is (same parent, lowest index), with its origin
+/// at [`base_centre`] and the colour of the first node, and moves `ids` into it keeping their
+/// world transforms.
+fn wrap_in_group(
+    doc: &mut Document,
+    ids: &[NodeId],
+    name: String,
+    pattern: Option<Pattern>,
+    modifier: Option<Modifier>,
+) -> Result<NodeId, DocError> {
+    let first = *ids.first().ok_or(DocError::NotFound)?;
+    let parent = doc.get(first).ok_or(DocError::NotFound)?.parent;
+    let index = ids
+        .iter()
+        .filter(|id| doc.get(**id).is_some_and(|n| n.parent == parent))
+        .filter_map(|id| doc.index_in_parent(*id))
+        .min();
+    let parent_world = parent.map_or(glam::DMat4::IDENTITY, |p| doc.world_matrix(p));
+    let centre = base_centre(doc, ids);
+    let mut group = Node::new(
+        name,
+        NodeKind::Group {
+            children: Vec::new(),
+            op: GroupOp::Combine,
+            pattern,
+            modifier,
+        },
+    );
+    group.color = doc.get(first).map_or(group.color, |n| n.color);
+    group.transform = Transform::from_translation(parent_world.inverse().transform_point3(centre));
+    let gid = doc.insert(group, parent, index)?;
+    for &id in ids {
+        doc.reparent(id, Some(gid), None)?;
+    }
+    Ok(gid)
 }
 
 fn validate_text(text: &str, height: f64, depth: f64) -> Result<(), DocError> {

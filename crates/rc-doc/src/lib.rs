@@ -11,8 +11,8 @@ pub mod project;
 pub mod transform;
 
 pub use document::{
-    DocError, DocSettings, Document, GroupOp, MAX_PATTERN_COPIES, Node, NodeId, NodeKind, Pattern,
-    Role,
+    DocError, DocSettings, Document, GroupOp, MAX_PATTERN_COPIES, MAX_ROUND_RADIUS, Modifier, Node,
+    NodeId, NodeKind, Pattern, Role,
 };
 pub use editor::{AlignMode, Command, Editor, Selection};
 pub use rc_kernel::{Primitive, PrimitiveKind};

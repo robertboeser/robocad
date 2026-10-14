@@ -508,6 +508,7 @@ impl RobocadApp {
                     }
                 });
             });
+            self.extensions_toolbar(ui);
             ui.separator();
             ui.checkbox(&mut self.snapping, "Snap")
                 .on_hover_text("Snap to the grid and to 15° (hold Alt while dragging to invert)");

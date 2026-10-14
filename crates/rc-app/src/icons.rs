@@ -16,6 +16,7 @@ pub enum Icon {
     Scale,
     Measure,
     LayFlat,
+    Round,
 }
 
 /// Paints `icon` into `rect` with stroke colour `c`.
@@ -140,6 +141,10 @@ pub fn paint(p: &egui::Painter, rect: Rect, icon: Icon, c: Color32) {
                 s,
             ));
             arrow(p, at(0.0, -0.9), at(0.0, -0.35), s);
+        }
+        Icon::Round => {
+            let r = Rect::from_center_size(ctr, Vec2::splat(w * 0.8));
+            p.rect(r, w * 0.25, fill, s, egui::StrokeKind::Middle);
         }
     }
 }

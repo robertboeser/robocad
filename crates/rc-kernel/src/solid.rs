@@ -23,6 +23,9 @@ pub trait GeometryKernel: Send + Sync {
     fn union(&self, parts: &[Self::Solid]) -> Self::Solid;
     fn difference(&self, a: &Self::Solid, b: &Self::Solid) -> Self::Solid;
     fn intersection(&self, parts: &[Self::Solid]) -> Self::Solid;
+    /// Rounds every convex edge and corner with `radius` mm; concave edges stay sharp and parts
+    /// thinner than 2 × `radius` disappear (morphological opening by a ball, see [`crate::round`]).
+    fn round_edges(&self, solid: &Self::Solid, radius: f64) -> Self::Solid;
     fn empty(&self) -> Self::Solid;
     fn volume(&self, solid: &Self::Solid) -> f64;
     fn is_empty(&self, solid: &Self::Solid) -> bool;
@@ -35,7 +38,7 @@ pub struct ManifoldKernel;
 
 /// A solid in the Manifold backend (cheap to clone: Manifold shares its internals).
 #[derive(Clone, Debug)]
-pub struct Solid(manifold_csg::Manifold);
+pub struct Solid(pub(crate) manifold_csg::Manifold);
 
 impl Solid {
     pub(crate) fn wrap(m: manifold_csg::Manifold) -> Self {
@@ -121,6 +124,10 @@ impl GeometryKernel for ManifoldKernel {
         };
         rest.iter()
             .fold(first.clone(), |acc, s| Solid(acc.0.intersection(&s.0)))
+    }
+
+    fn round_edges(&self, solid: &Solid, radius: f64) -> Solid {
+        Solid(crate::round::round_edges(&solid.0, radius))
     }
 
     fn empty(&self) -> Solid {

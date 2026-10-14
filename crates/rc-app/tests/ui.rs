@@ -803,3 +803,57 @@ fn first_run_card_and_shortcut_window() {
     let Some(h2) = harness_with(dirs) else { return };
     assert!(h2.state().settings.hints_shown, "dismissal is remembered");
 }
+
+#[test]
+fn round_edges_extension_is_off_by_default_and_rounds_selection() {
+    let (_t, dirs) = temp_dirs();
+    {
+        let Some(mut h) = harness_with(dirs.clone()) else {
+            return;
+        };
+        let b = add_box(&mut h);
+        assert!(
+            h.query_by_label("Round").is_none(),
+            "extensions add nothing to the UI until enabled"
+        );
+
+        // Turn the extension on in the preferences window.
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Comma);
+        h.run_steps(2);
+        h.get_by_label("Round edges").click();
+        h.run_steps(2);
+        assert!(h.state().extension_enabled("round-edges"));
+
+        h.get_by_label("Round").click();
+        h.run_steps(2);
+        settle(&mut h);
+        let g = roots(&h)[0];
+        let node = h.state().editor.doc().get(g).unwrap();
+        assert_eq!(
+            node.modifier(),
+            Some(rc_doc::Modifier::RoundEdges { radius: 1.0 })
+        );
+        assert_eq!(node.children(), &[b]);
+        assert_eq!(h.state().editor.selection.ids(), &[g]);
+        // 20 mm cube, r = 1: 12 edges of 18 mm lose (1 − π/4) mm² each, 8 corners (1 − π/6).
+        let pi = std::f64::consts::PI;
+        let expected = 8000.0 - (1.0 - pi / 4.0) * 12.0 * 18.0 - 8.0 * (1.0 - pi / 6.0);
+        let info = h.state().group_info(g).expect("evaluated");
+        assert!(
+            (info.volume - expected).abs() < 0.005 * expected,
+            "{} vs {expected}",
+            info.volume
+        );
+        h.key_press(Key::F);
+        h.run_steps(3);
+        snapshot(&mut h, "rounded_box");
+
+        h.get_by_label("Remove rounding").click();
+        h.run_steps(2);
+        assert_eq!(roots(&h), vec![b]);
+    }
+    // The choice is saved with the settings.
+    let Some(h) = harness_with(dirs) else { return };
+    assert!(h.state().extension_enabled("round-edges"));
+    assert!(h.query_by_label("Round").is_some());
+}

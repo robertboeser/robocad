@@ -10,6 +10,7 @@ repair broken meshes, and export watertight STL or 3MF files for your slicer.
 - **Shapes**: box, cylinder, cone, sphere, torus, wedge and 3D text, all with exact sizes in mm.
 - **Holes and groups**: any object can be a *hole*; grouping (⌘G) unions the solids and cuts the holes. Groups can intersect instead.
 - **Patterns**: mirror, linear/grid arrays and circular arrays that stay editable.
+- **Extensions** (off by default, enable in Preferences → Extensions): **Round edges** rounds all outward edges of the selected object with an editable radius.
 - **Direct manipulation**: drag objects on the plate, move/rotate/scale handles with snapping, typed values with arithmetic (`20/2+3`), align, drop to plate, lay a face flat, measure distances and wall thickness.
 - **Import**: STL (binary and ASCII) and OBJ, with automatic safe fixes; one-click **Repair** for open, inside-out or non-manifold meshes.
 - **Export**: watertight STL, or 3MF with one object per part and colours. Checked with PrusaSlicer.

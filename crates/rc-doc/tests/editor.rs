@@ -325,3 +325,71 @@ fn group_bounds_ignore_holes() {
         "dropping uses the solid part"
     );
 }
+
+#[test]
+fn round_edges_wraps_each_object_and_ungroup_restores_it() {
+    use rc_doc::Modifier;
+    let mut ed = Editor::default();
+    let a = import(&mut ed, "a", DVec3::new(5.0, 0.0, 0.0));
+    let b = import(&mut ed, "b", DVec3::new(40.0, 0.0, 0.0));
+    ed.apply(Command::ToggleRole(vec![b])).unwrap();
+    let before = ed.doc().clone();
+    let world_a = ed.doc().world_matrix(a);
+    let round = Modifier::RoundEdges { radius: 1.0 };
+    let created = ed
+        .apply(Command::AddModifier {
+            nodes: vec![a, b],
+            modifier: round,
+        })
+        .unwrap()
+        .created;
+    assert_eq!(created.len(), 2, "one group per object");
+    assert_eq!(ed.selection.ids(), created.as_slice());
+    assert_eq!(ed.undo_label(), Some("Round edges"));
+    let (ga, gb) = (created[0], created[1]);
+    let doc = ed.doc();
+    assert_eq!(doc.roots, vec![ga, gb], "groups take the objects' places");
+    assert_eq!(doc.get(ga).unwrap().name, "Rounded a");
+    assert_eq!(doc.get(ga).unwrap().modifier(), Some(round));
+    assert_eq!(doc.get(ga).unwrap().children(), &[a]);
+    assert!(
+        approx_mat(doc.world_matrix(a), world_a),
+        "object does not move"
+    );
+    // The hole's group becomes the hole; its content is the solid that gets rounded.
+    assert_eq!(doc.get(gb).unwrap().role, Role::Hole);
+    assert_eq!(doc.get(b).unwrap().role, Role::Solid);
+
+    ed.apply(Command::SetModifier(
+        ga,
+        Some(Modifier::RoundEdges { radius: 2.5 }),
+    ))
+    .unwrap();
+    assert_eq!(
+        ed.doc().get(ga).unwrap().modifier(),
+        Some(Modifier::RoundEdges { radius: 2.5 })
+    );
+    for bad in [0.0, -1.0, f64::NAN, 1e9] {
+        let m = Modifier::RoundEdges { radius: bad };
+        assert!(ed.apply(Command::SetModifier(ga, Some(m))).is_err());
+        assert!(
+            ed.apply(Command::AddModifier {
+                nodes: vec![a],
+                modifier: m
+            })
+            .is_err()
+        );
+    }
+    assert!(ed.apply(Command::SetModifier(a, Some(round))).is_err());
+
+    // Ungrouping removes the rounding and gives the hole back its role.
+    ed.apply(Command::Ungroup(vec![ga, gb])).unwrap();
+    assert_eq!(ed.doc().roots, vec![a, b]);
+    assert_eq!(ed.doc().get(b).unwrap().role, Role::Hole);
+    assert!(approx_mat(ed.doc().world_matrix(a), world_a));
+
+    for _ in 0..3 {
+        ed.undo();
+    }
+    assert_eq!(*ed.doc(), before);
+}

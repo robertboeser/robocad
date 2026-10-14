@@ -23,7 +23,7 @@ impl Default for PropsUiState {
 }
 
 /// A DragValue that also accepts typed arithmetic (`20/2+3`).
-fn number<'a>(value: &'a mut f64, speed: f64, suffix: &str) -> egui::DragValue<'a> {
+pub(crate) fn number<'a>(value: &'a mut f64, speed: f64, suffix: &str) -> egui::DragValue<'a> {
     egui::DragValue::new(value)
         .speed(speed)
         .max_decimals(4)
@@ -223,6 +223,9 @@ fn single(app: &mut RobocadApp, ui: &mut egui::Ui, id: NodeId) {
     }
     if node.is_group() {
         pattern_section(ui, id, node.pattern(), &mut commands);
+    }
+    app.extensions_node_properties(ui, id);
+    if node.is_group() {
         group_info(app, ui, id);
     }
     if let NodeKind::Imported { mesh, ref source } = node.kind {

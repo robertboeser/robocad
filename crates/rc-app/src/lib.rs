@@ -1,6 +1,7 @@
 //! robocad desktop application (library part, so UI tests can drive the app headlessly).
 
 pub mod app;
+pub mod extensions;
 pub mod gizmo;
 pub mod help;
 pub mod icons;

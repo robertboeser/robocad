@@ -833,6 +833,7 @@ impl RobocadApp {
                         ui.close();
                     }
                 }
+                self.extensions_selection_menu(ui);
                 ui.separator();
                 if ui.button(crate::help::keys("Select all  ⌘A")).clicked() {
                     self.select_all();

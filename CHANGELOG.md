@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### M10 — Extensions & round edges
+- Extension system: optional features with their own toolbar buttons, menu entries and property sections, compiled in and **off by default**; enable them in Preferences → Extensions (ADR 0002).
+- First extension, **Round edges**: rounds all outward edges and corners of the selected objects with an editable radius (default 1 mm, smaller for thin parts). Non-destructive: the object is wrapped in a "Rounded …" group, stays editable, and Ungroup / "Remove rounding" restores it. Rounded holes cut pockets with rounded edges.
+- `rc-kernel`: `GeometryKernel::round_edges` (morphological opening by a ball) with a fast path for convex solids; `rc-doc`: `Modifier` on groups, `AddModifier` / `SetModifier` commands; projects without rounding are saved exactly as before.
+- Ungrouping a hole group now turns its solid parts into holes, so the result does not change.
+
 ### M9 — Polish, performance, packaging
 - Painted toolbar icons, Help menu with a keyboard-shortcut reference (F1 / ?), first-run "Welcome" card, platform-aware shortcut labels (⌘ on macOS, Ctrl elsewhere).
 - Robustness: background jobs survive panics and report failures; fixed a context deadlock caught by the UI tests.

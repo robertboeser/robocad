@@ -144,6 +144,41 @@ impl Pattern {
     }
 }
 
+/// Largest rounding radius in mm.
+pub const MAX_ROUND_RADIUS: f64 = 1000.0;
+
+/// A geometry operation applied to a group's combined result (before its pattern). Modifiers
+/// come from optional extensions; a document that uses one evaluates whether or not the
+/// extension is enabled in the app.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Modifier {
+    /// Rounds every convex (outward) edge and corner with `radius` mm. Concave edges stay
+    /// sharp; parts thinner than 2 × `radius` disappear. Extension "round-edges".
+    RoundEdges { radius: f64 },
+}
+
+impl Modifier {
+    /// User-facing name (also the undo label).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::RoundEdges { .. } => "Round edges",
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        match *self {
+            Self::RoundEdges { radius }
+                if !(radius.is_finite() && radius > 0.0 && radius <= MAX_ROUND_RADIUS) =>
+            {
+                Err(format!(
+                    "the rounding radius must be between 0 and {MAX_ROUND_RADIUS} mm"
+                ))
+            }
+            Self::RoundEdges { .. } => Ok(()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum NodeKind {
     /// A mesh imported from a file, referenced by content hash in the mesh store.
@@ -162,6 +197,9 @@ pub enum NodeKind {
         /// Optional mirror/array applied to the combined result.
         #[serde(default)]
         pattern: Option<Pattern>,
+        /// Optional operation on the combined result, applied before the pattern.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        modifier: Option<Modifier>,
     },
 }
 
@@ -196,6 +234,14 @@ impl Node {
     pub fn pattern(&self) -> Option<Pattern> {
         match self.kind {
             NodeKind::Group { pattern, .. } => pattern,
+            _ => None,
+        }
+    }
+
+    /// The modifier of a group, if any.
+    pub fn modifier(&self) -> Option<Modifier> {
+        match self.kind {
+            NodeKind::Group { modifier, .. } => modifier,
             _ => None,
         }
     }

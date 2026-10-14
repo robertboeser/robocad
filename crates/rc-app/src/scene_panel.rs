@@ -241,6 +241,7 @@ fn row_contents(
             app.ungroup_selection();
             ui.close();
         }
+        app.extensions_selection_menu(ui);
         ui.separator();
         if ui.button("Delete").clicked() {
             app.delete_selection();
