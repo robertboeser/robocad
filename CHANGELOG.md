@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Build
+- `build.sh`: one command builds the macOS `robocad.app` (+ DMG) and cross-compiles the Windows `robocad.exe` / `robocad-cli.exe` (+ zip) with mingw-w64; static C++ runtime, no extra DLLs. Applies the stale Command Line Tools header workaround automatically.
+- Release builds on Windows no longer open a console window next to the app.
+
 ### M10 — Extensions & round edges
 - Extension system: optional features with their own toolbar buttons, menu entries and property sections, compiled in and **off by default**; enable them in Preferences → Extensions (ADR 0002).
 - First extension, **Round edges**: rounds all outward edges and corners of the selected objects with an editable radius (default 1 mm, smaller for thin parts). Non-destructive: the object is wrapped in a "Rounded …" group, stays editable, and Ungroup / "Remove rounding" restores it. Rounded holes cut pockets with rounded edges.

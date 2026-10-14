@@ -9,6 +9,11 @@
    - Windows: `robocad-<version>-windows-x86_64.zip`
 
 ## Local packages
+- One step from macOS: `./build.sh` builds `dist/robocad.app` (+ DMG) and cross-compiles
+  `dist/robocad-<version>-windows-x86_64/robocad.exe` (+ zip) with mingw-w64
+  (`./build.sh mac` / `./build.sh windows` for one of them, `--universal` for the Mac app).
+  The Windows cross build uses `packaging/mingw-w64-x86_64.cmake` for the Manifold C++ code and
+  links the C++ runtime statically.
 - macOS: `scripts/package-macos.sh` (add `--universal` for Intel + Apple Silicon)
 - Linux: `scripts/package-linux.sh`
 - Windows: `pwsh scripts/package-windows.ps1`

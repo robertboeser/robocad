@@ -1,4 +1,6 @@
 //! robocad desktop application.
+// Release builds on Windows are GUI programs: no console window next to the app.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 

@@ -50,8 +50,13 @@ On Linux you also need the usual windowing development packages (see `.github/wo
 ```sh
 cargo run --release -p rc-app             # desktop app
 cargo run --release -p rc-cli -- --help   # command-line tool
-scripts/package-macos.sh                  # robocad.app + DMG in dist/
+./build.sh                                # macOS: robocad.app + DMG, and Windows robocad.exe + zip, in dist/
+./build.sh mac                            # only the macOS app (add --universal for Intel + Apple Silicon)
+./build.sh windows                        # only robocad.exe, cross-compiled with mingw-w64
 ```
+
+The Windows build from macOS or Linux needs CMake 3.21+ and mingw-w64 (`brew install mingw-w64` or
+`sudo apt install mingw-w64`); the executables link everything statically and need no extra DLLs.
 
 Development: see [CLAUDE.md](CLAUDE.md) for conventions and the full check, [PLAN.md](PLAN.md) for the design,
 [docs/performance.md](docs/performance.md) for measurements and [docs/release.md](docs/release.md) for releasing.

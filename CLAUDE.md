@@ -8,6 +8,7 @@ Read `PLAN.md` first. It is the spec; milestones are worked in order and marked 
 - Run CLI: `cargo run -p rc-cli -- <args>` (binary `robocad-cli`)
 - Full check (must pass before every commit):
   `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
+- Packages: `./build.sh [all|mac|windows] [--universal]` → `dist/` (`.app` + DMG; Windows `.exe` cross-built with mingw-w64)
 - Benchmarks: `cargo bench -p rc-mesh` (and other crates with `benches/`)
 
 ## Local build note (this Mac)
